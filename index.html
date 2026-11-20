@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b3d26">
 <title>CheckFormation</title>
+<script>
+if (location.protocol === 'http:' && location.hostname === 'checkformation.unismartsolution.com.br') {
+  const secureURL = new URL(location.href);
+  secureURL.protocol = 'https:';
+  location.replace(secureURL.href);
+}
+</script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -692,7 +699,7 @@ function refreshCloud(){
   S=migrate(state);
   signedProfile=snapshots.users?.[profileKey]?.id;
   baseline=structuredClone(S);
-  if(!cur()){ready=false;accessMessage='Acesso bloqueado. Solicite um convite ativo.'}
+  if(!cur()){ready=false;accessMessage='Acesso bloqueado. Procure o gestor.'}
   if(!document.querySelector('input:focus,textarea:focus,select:focus') || !cur())render();
 }
 function keyFor(table,id){return Object.entries(snapshots[table]||{}).find(([,row])=>row?.id===id)?.[0]}
@@ -719,33 +726,165 @@ async function save(){
   catch(err){toast('Firebase não confirmou a gravação. Tente novamente.');return false}
   finally{busy=false;document.querySelector('#root').inert=false;refreshCloud();render()}
 }
-async function connectCloud(){
-  const url='https://www.gstatic.com/firebasejs/11.10.0/';
-  const [appMod,authMod,dbMod]=await Promise.all(['firebase-app.js','firebase-auth.js','firebase-database.js'].map(file=>import(url+file)));
-  api=dbMod;authApi=authMod;
-  const app=appMod.initializeApp({apiKey:'AIzaSyB4hE17tRfhIm0dZ0xHIvDyo-3U_GoF5Yw',projectId:'checkformation-e38b2',authDomain:'checkformation-e38b2.firebaseapp.com',appId:'1:990833258270:web:3235bdc715768fd1cb630f',databaseURL:'https://checkformation-e38b2-default-rtdb.firebaseio.com'});
-  auth=authMod.getAuth(app);db=api.getDatabase(app);await auth.authStateReady();
-  const identity=auth.currentUser||(await authMod.signInAnonymously(auth)).user;
-  const device=api.ref(db,'devices/'+identity.uid);
-  const invite=new URLSearchParams(location.hash.slice(1));
-  if(invite.has('convite')){
-    const token=invite.get('convite'), key=invite.get('perfil');
-    await api.set(device,{token,key});history.replaceState(null,'',location.pathname+location.search);
-  }
-  const deviceData=(await api.get(device)).val();
-  if(!deviceData){accessMessage='Abra o link de convite do seu perfil para entrar.';render();return}
-  profileKey=deviceData.key;
-  const paths=[...tables,'cats'];
-  await Promise.all(paths.map(async path=>{snapshots[path]=(await api.get(api.ref(db,path))).val()}));
-  ready=true;refreshCloud();
-  for(const path of paths)api.onValue(api.ref(db,path),snap=>{snapshots[path]=snap.val();refreshCloud()},()=>{ready=false;signedProfile=null;accessMessage='Acesso interrompido. Reabra seu convite.';render()});
-  api.onValue(api.ref(db,'.info/connected'),snap=>{connected=!!snap.val();const status=document.getElementById('cloud-status');if(status)status.textContent=connected?'Firebase conectado':'Sem conexão com o Firebase'});
+const FIREBASE_OPTIONS={apiKey:'AIzaSyB4hE17tRfhIm0dZ0xHIvDyo-3U_GoF5Yw',projectId:'checkformation-e38b2',authDomain:'checkformation-e38b2.firebaseapp.com',appId:'1:990833258270:web:3235bdc715768fd1cb630f',databaseURL:'https://checkformation-e38b2-default-rtdb.firebaseio.com'};
+let appModule, cloudApp;
+const initialManagerUid='I9v1eFxFGEbTUeJQMQ6f7BonOgJ3';
+const normalized = value => value.trim().toLowerCase();
+async function digest(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(bytes), n => n.toString(16).padStart(2,'0')).join('');
 }
-async function makeInvite(id){
-  if(!isSr())return;
-  const key=keyFor('users',id),token=Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('');
-  try{await api.set(api.ref(db,'passes/'+token),key);prompt('Copie o convite privado deste perfil',location.origin+location.pathname+'#perfil='+encodeURIComponent(key)+'&convite='+token)}
-  catch{toast('Não foi possível criar o convite')}
+function status(message) {
+  accessMessage = message;
+  const line = document.getElementById('loginStatus');
+  if (line) line.textContent = message;
+}
+async function enterProfile(identity) {
+  let key = (await api.get(api.ref(db,'members/'+identity.uid))).val();
+  if (!key && identity.uid === initialManagerUid) {
+    const original=(await api.get(api.ref(db,'users/0'))).val();
+    if (!original?.on || original.role!=='senior' || original.authUid) throw Error('profile');
+    const mailbox=normalized(identity.email);
+    const loginHash=await digest('adm'), emailHash=await digest(mailbox);
+    await api.update(api.ref(db),{
+      ['members/'+identity.uid]:'0',
+      ['logins/'+loginHash]:{key:'0',email:mailbox},
+      ['mailboxes/'+emailHash+'/'+loginHash]:mailbox,
+      'users/0/login':'ADM','users/0/email':mailbox,'users/0/authEmail':mailbox,'users/0/authUid':identity.uid
+    });
+    key='0';
+  }
+  if (typeof key !== 'string') throw Error('profile');
+  const paths = [...tables,'cats'];
+  await Promise.all(paths.map(async path => { snapshots[path] = (await api.get(api.ref(db,path))).val(); }));
+  const profile = snapshots.users?.[key];
+  if (!profile?.on || profile.authUid !== identity.uid) throw Error('profile');
+  profileKey = key;
+  ready = true;
+  refreshCloud();
+  for (const path of paths) api.onValue(api.ref(db,path), snap => {
+    snapshots[path] = snap.val(); refreshCloud();
+  }, () => {
+    if (ready) { ready=false; signedProfile=null; render(); authApi.signOut(auth).finally(()=>location.reload()); }
+  });
+  authApi.onAuthStateChanged(auth, current => { if (current?.uid !== identity.uid) location.reload(); });
+}
+async function connectCloud() {
+  if (!window.isSecureContext || location.protocol !== 'https:') {
+    status('Abra o CheckFormation por HTTPS para entrar.'); return;
+  }
+  const url='https://www.gstatic.com/firebasejs/11.10.0/';
+  [appModule,authApi,api] = await Promise.all(['firebase-app.js','firebase-auth.js','firebase-database.js'].map(file=>import(url+file)));
+  cloudApp = appModule.initializeApp(FIREBASE_OPTIONS);
+  auth = authApi.getAuth(cloudApp); db=api.getDatabase(cloudApp);
+  await auth.authStateReady();
+  api.onValue(api.ref(db,'.info/connected'), snap=>{
+    connected=!!snap.val();
+    const line=document.getElementById('cloud-status');
+    if(line) line.textContent=connected?'Firebase conectado':'Sem conexão com o Firebase';
+  });
+  const identity=auth.currentUser;
+  if(identity && !identity.isAnonymous) {
+    try { await enterProfile(identity); return; }
+    catch { await authApi.signOut(auth); status('Acesso indisponível. Procure o gestor.'); return; }
+  }
+  if(identity) await authApi.signOut(auth);
+  status('');
+}
+async function recoverPassword(form) {
+  const email=normalized(form.elements.email.value);
+  const mailKey=await digest(email);
+  const aliases=(await api.get(api.ref(db,'mailboxes/'+mailKey))).val() || {};
+  const entries=Object.values(aliases);
+  const loginBox=form.querySelector('[data-recovery-login]');
+  const loginField=form.elements.recoveryLogin;
+  if(entries.length>1 && (loginBox.hidden || !loginField.value.trim())) {
+    loginBox.hidden=false; loginField.required=true; loginField.focus();
+    status('Este e-mail atende mais de uma conta. Informe qual usuário deseja recuperar.'); return;
+  }
+  const recipient=entries.length===1 ? entries[0] : aliases[await digest(normalized(loginField.value))];
+  if(recipient) {
+    auth.languageCode='pt-BR';
+    await authApi.sendPasswordResetEmail(auth,recipient);
+  }
+  status('Se os dados corresponderem a um cadastro, o link para definir a nova senha chegará ao e-mail. Confira também o spam.');
+}
+async function loginWithPassword(login,password) {
+  const user=normalized(login);
+  if(user==='adm' && password==='123') {
+    document.getElementById('lgP').value='';
+    document.getElementById('recovery').open=true;
+    document.getElementById('recoveryLogin').value=login.trim();
+    document.getElementById('recoveryEmail').focus();
+    status('Primeiro acesso do ADM. Confirme seu e-mail para definir a senha.');return;
+  }
+  const nameKey=await digest(user);
+  const alias=(await api.get(api.ref(db,'logins/'+nameKey))).val();
+  const email=alias?.email || (user.includes('@') ? user : '');
+  if(!email) throw Error('login');
+  const identity=(await authApi.signInWithEmailAndPassword(auth,email,password)).user;
+  try { await enterProfile(identity); } catch(err) { await authApi.signOut(auth); throw err; }
+}
+function taggedMailbox(mailbox) {
+  const [local,domain]=mailbox.split('@');
+  return local.split('+')[0]+'+cf'+crypto.randomUUID().replaceAll('-','').slice(0,16)+'@'+domain;
+}
+async function setAccess(profile,key,login,password,fields) {
+  const nameKey=await digest(normalized(login));
+  const oldKey=profile?.login ? await digest(normalized(profile.login)) : null;
+  const changes={};
+  let uid=profile?.authUid, email=profile?.authEmail;
+  let secondary, temporary;
+  try {
+    const mailbox=normalized(fields.email);
+    const mailKey=await digest(mailbox);
+    const oldMailKey=profile?.email ? await digest(normalized(profile.email)) : null;
+    const manager=key==='0';
+    if(manager && mailbox!==normalized(auth.currentUser.email)) throw Error('manager-mail');
+    if(manager && password) await authApi.updatePassword(auth.currentUser,password);
+    if(!manager && (password || !uid || mailbox!==profile?.email)) {
+      if(!password) throw Error('password');
+      secondary=appModule.initializeApp(cloudApp.options,'access-'+crypto.randomUUID());
+      const secondaryAuth=authApi.initializeAuth(secondary,{persistence:authApi.inMemoryPersistence});
+      const shared=S.users.some(u=>u.authUid && normalized(u.email||'')===mailbox);
+      email=(shared || mailbox===profile?.authEmail) ? taggedMailbox(mailbox) : mailbox;
+      temporary=(await authApi.createUserWithEmailAndPassword(secondaryAuth,email,password)).user;
+      uid=temporary.uid;
+    }
+    if (!uid || !email) throw Error('password');
+    if(profile?.authUid && profile.authUid!==uid) changes['members/'+profile.authUid]=null;
+    if(oldKey && oldKey!==nameKey && profile?.authUid) changes['logins/'+oldKey]=null;
+    if(oldMailKey && oldKey && (oldMailKey!==mailKey || oldKey!==nameKey)) changes['mailboxes/'+oldMailKey+'/'+oldKey]=null;
+    changes['mailboxes/'+mailKey+'/'+nameKey]=email;
+    changes['members/'+uid]=key;
+    changes['logins/'+nameKey]={key,email};
+    const updates={...fields,login,authUid:uid,authEmail:email};
+    for(const [field,value] of Object.entries(updates)) changes['users/'+key+'/'+field]=value;
+    if(fields.role==='op' && profile) {
+      for(const t of S.tasks) if(t.assign.includes(profile.id) && !fields.depts.includes(t.dept)) {
+        changes['tasks/'+keyFor('tasks',t.id)+'/assign']=t.assign.filter(id=>id!==profile.id);
+      }
+    }
+    await api.update(api.ref(db),changes);
+  } catch(err) {
+    if(temporary && /permission/i.test(err.code||'')) await authApi.deleteUser(temporary).catch(()=>{});
+    throw err;
+  } finally { if(secondary) await appModule.deleteApp(secondary); }
+}
+async function submitAccess(form) {
+  const button=form.querySelector('[type=submit]');
+  if(button.disabled) return;
+  button.disabled=true;
+  try {
+    if(!auth || !db || location.protocol!=='https:') {status('Aguarde a conexão segura com o Firebase.');return;}
+    if(form.id==='fRecover') await recoverPassword(form);
+    else await loginWithPassword(form.elements.login.value,form.elements.senha.value);
+  } catch(err) {
+    let msg=form.id==='fLogin'?'Login ou senha inválidos, ou acesso bloqueado.':'Não foi possível enviar o link. Confira a conexão e tente novamente.';
+    if(err.code==='auth/too-many-requests') msg='Muitas tentativas. Aguarde antes de tentar novamente.';
+    if(err.code==='auth/network-request-failed') msg='Falha de conexão. Tente novamente.';
+    status(msg);
+  } finally {button.disabled=false;}
 }
 /* ---------- Tema ---------- */
 const isDark=()=>{const t=ls.get('cf-theme','');return t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches};
@@ -789,12 +928,24 @@ function vLogin(){
   return `<div class="login"><section class="lart"><div class="stage" id="stage"><div class="tod" role="group" aria-label="Iluminação da cena"><button type="button" data-tod="now">Agora</button><button type="button" data-tod="6.2">Amanhecer</button><button type="button" data-tod="12">Meio-dia</button><button type="button" data-tod="17.6">Pôr do sol</button><button type="button" data-tod="21">Noite</button><output id="todLabel"></output></div></div>
   <div class="txt"><h2>Rotina operacional sob controle, do pátio à destinação final</h2><p>Cada tarefa registrada com responsável, data e hora — base para auditorias e licenças ambientais.</p>
   <div class="ltags"><span>Gestão de resíduos</span><span>Coleta seletiva</span><span>Logística de caçambas</span><span>Segurança do trabalho</span></div></div></section>
-  <div class="lform"><form class="lbox" id="fLogin" autocomplete="on">
+  <div class="lform"><section class="lbox">
    ${uniImg('unilogo')}
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div></div>
-   <p role="status">${esc(accessMessage)}</p><div class="row-end" style="justify-content:center">${themeBtn().replace('class="chip"','class="btn ghost sm"')}</div>
+   <form id="fLogin">
+    <div class="f"><label for="lgU">Usuário</label><input id="lgU" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+    <div class="f"><label for="lgP">Senha</label><div class="pw"><input id="lgP" name="senha" type="password" autocomplete="current-password" required><button type="button" data-act="showpw" aria-controls="lgP">Mostrar</button></div></div>
+    <button type="submit" class="btn" style="width:100%">Entrar</button>
+   </form>
+   <details id="recovery"><summary>Esqueci a senha</summary>
+    <form id="fRecover">
+      <div class="f"><label for="recoveryEmail">E-mail cadastrado</label><input id="recoveryEmail" name="email" type="email" autocomplete="email" required></div>
+      <div class="f" data-recovery-login hidden><label for="recoveryLogin">Usuário a recuperar</label><input id="recoveryLogin" name="recoveryLogin" autocapitalize="none" autocomplete="username"></div>
+      <button type="submit" class="btn ghost">Enviar link de recuperação</button>
+    </form><p class="note">Se perdeu o acesso ao e-mail, procure o gestor.</p>
+   </details>
+   <p id="loginStatus" role="status" aria-live="polite">${esc(accessMessage)}</p><div class="row-end" style="justify-content:center">${themeBtn().replace('class="chip"','class="btn ghost sm"')}</div>
    <p class="byuni">Uma solução <b>UNI · Smart Outsourcing Solutions</b></p>
-  </form></div></div>`;
+  </section></div></div>`;
 }
 
 /* ---------- Checklist ---------- */
@@ -913,8 +1064,10 @@ function vEquipe(){
   <form class="panel" id="fUser" autocomplete="off"><h3>${e?'Editar usuário':'Cadastrar usuário'}</h3>
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
-    <div><label for="uLogin">Usuário (login)</label><input id="uLogin" required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
-    <div><label for="uRole">Perfil</label><select id="uRole"><option value="op">Operador — só tarefas</option><option value="senior" ${e?.role==='senior'?'selected':''}>Sênior — painel e gestão</option></select></div>
+    <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
+    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
+    <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
+    <input id="uRole" type="hidden" value="${sr?'senior':'op'}">
    </div>
    <div class="f" style="margin-top:14px"><label>Departamentos que pode acessar</label>
     <div class="checks" id="udepBox" ${sr?'hidden':''}>${S.depts.map(d=>`<label><input type="checkbox" name="udep" value="${d.id}" ${ud.includes(d.id)?'checked':''}> ${esc(d.name)}${d.on?'':' <small style="color:var(--mute)">(inativo)</small>'}</label>`).join('')}</div>
@@ -924,7 +1077,7 @@ function vEquipe(){
    <p class="note">O nome cadastrado é o que aparece automaticamente em cada check. O login não diferencia maiúsculas e minúsculas. Quem tem mais de um departamento escolhe, no alto da tela, em qual vai preencher.</p></form>
   <section class="panel">${S.users.map(u=>`<div class="trow${u.on?'':' off'}"><div><b>${esc(u.name)}</b> <span class="tag" style="color:var(--pri);background:var(--ok-bg)">${u.role==='senior'?'Sênior':'Operador'}</span>${u.on?'':' <span class="note">(sem acesso)</span>'}
     <div class="resp">Login: ${esc(u.login)} · ${u.role==='op'?'Departamentos: '+(esc(u.depts.map(deptName).join(', '))||'<b style="color:var(--crit)">nenhum</b>')+' · '+S.tasks.filter(t=>canDo(t,u)).length+' tarefas':'todos os departamentos'}</div></div>
-   <div class="acts"><button class="btn ghost sm" type="button" data-act="invite" data-profile="${u.id}">Convite</button><button class="btn ghost sm" type="button" data-uedit="${u.id}">Editar</button>${u.id!==me.id?`<button class="btn ghost sm" type="button" data-utog="${u.id}">${u.on?'Bloquear':'Liberar'}</button>`:''}</div></div>`).join('')}</section>`;
+   <div class="acts"><button class="btn ghost sm" type="button" data-uedit="${u.id}">Editar</button>${u.id!==me.id?`<button class="btn ghost sm" type="button" data-utog="${u.id}">${u.on?'Bloquear':'Liberar'}</button>`:''}</div></div>`).join('')}</section>`;
 }
 
 /* ---------- Histórico (sênior) ---------- */
@@ -1220,7 +1373,6 @@ document.addEventListener('click',async e=>{
   const d=el.dataset,u=cur();
   if(d.act==='theme')toggleTheme();
   else if(d.act==='showpw'){const p=$('#lgP');p.type=p.type==='password'?'text':'password';el.textContent=p.type==='password'?'Mostrar':'Ocultar'}
-  else if(d.act==='invite')await makeInvite(d.profile)
   else if(d.act==='logout'){if(auth){await authApi.signOut(auth);location.reload()}}
   else if(d.v){view=d.v;ls.set('cf-view-'+u.role,view);editTask=editUser=editDept=null;render();scrollTo(0,0)}
   else if(d.dept){setDept(u,d.dept);filter='Todas';editTask=null;render()}
@@ -1261,7 +1413,7 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.name==='asg'&&t.checked)$('#asgAll').checked=false;
 });
 document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
-  if(f.id==='fLogin')return;
+  if(['fLogin','fRecover'].includes(f.id)){await submitAccess(f);return;}
   if(!isSr()){toast('Sessão expirada');render();return}
   if(f.id==='fTask'){let cat=$('#tCat').value;if(cat==='__new'){cat=$('#tNewCat').value.trim();if(!cat){toast('Informe a nova categoria');return}if(!S.cats.includes(cat))S.cats.push(cat)}
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
@@ -1274,24 +1426,31 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
     if(editDept){S.depts.find(x=>x.id===editDept).name=name;toast('Departamento atualizado')}
     else{S.depts.push({id:'d'+(nextId()),name,on:true});toast('Departamento criado')}
     editDept=null;await save()}
-  if(f.id==='fUser'){const name=$('#uName').value.trim(),login=$('#uLogin').value.trim(),pw='',role=$('#uRole').value;
-    if(!/^[A-Za-z0-9._-]{2,30}$/.test(login)){$('#uErr').textContent='Login: 2 a 30 caracteres, sem espaços (letras, números, ponto, hífen).';return}
-    if(S.users.some(u=>u.login.toLowerCase()===login.toLowerCase()&&u.id!==editUser)){$('#uErr').textContent='Já existe um usuário com esse login.';return}
-    if(pw&&pw.length<3){$('#uErr').textContent='A senha precisa de pelo menos 3 caracteres.';return}
-    const depts=[...document.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
-    if(role==='op'&&!depts.length){$('#uErr').textContent='Marque pelo menos um departamento para o operador.';return}
-    if(editUser){const x=S.users.find(u=>u.id===editUser);
-      if(x.id===cur().id&&role!=='senior'){$('#uErr').textContent='Você não pode remover o seu próprio perfil de sênior.';return}
-      Object.assign(x,{name,login,role,depts});if(pw){x.salt=newSalt();x.hash=hashPw(x.salt,pw)}
-      let n=0;if(role==='op')S.tasks.forEach(t=>{if(!depts.includes(t.dept)&&t.assign.includes(x.id)){t.assign=t.assign.filter(i=>i!==x.id);n++}});
-      toast('Usuário atualizado'+(n?` · saiu de ${n} tarefa${n>1?'s':''}`:''));}
-    else{S.users.push({id:'u'+(nextId()),login,name,role,depts,on:true});toast('Usuário cadastrado')}
-    editUser=null;await save()}
+  if(f.id==='fUser'){
+    const profile=editUser?S.users.find(u=>u.id===editUser):null;
+    const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
+    const role=profile?.role||'op', depts=[...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
+    const error=$('#uErr');
+    if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
+    if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && normalized(u.login)===login)){error.textContent='Este login já está em uso.';return}
+    if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
+    if(role==='op'&&!depts.length){error.textContent='Selecione ao menos um departamento.';return}
+    const id=profile?.id||'u'+nextId(), key=profile?keyFor('users',id):'id_'+id;
+    if(busy || !connected){error.textContent='Aguarde a conexão para salvar.';return}
+    busy=true; f.inert=true; error.textContent='Salvando acesso…';
+    try{
+      await setAccess(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
+      editUser=null;toast('Acesso salvo.');
+      if(password && profile?.id===cur()?.id){await authApi.signOut(auth);location.reload();return;}
+    }catch{error.textContent='Não foi possível salvar. Confira o login, a senha e a conexão.';return}
+    finally{busy=false;f.inert=false}
+    refreshCloud();render();
+  }
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{applyTheme();render()});
 
 applyTheme();render();
-connectCloud().catch(()=>{ready=false;signedProfile=null;accessMessage='Não foi possível abrir os dados. Confira a internet e o convite e atualize a página.';render()});
+connectCloud().catch(()=>{ready=false;signedProfile=null;accessMessage='Não foi possível abrir os dados. Confira a conexão e atualize a página.';render()});
 setInterval(()=>{if(cur()&&!document.querySelector('input:focus,textarea:focus,select:focus'))render()},300000);
 }
 </script></body></html>
