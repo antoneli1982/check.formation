@@ -212,6 +212,18 @@ main{padding-top:16px}
 dialog{width:100%;max-width:100%;margin:auto 0 0;border-radius:18px 18px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom))}
 table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal;color:var(--mute)}.stack td:empty{display:none}}
 @media(max-width:360px){.brand small{display:none}.brand h1{font-size:17px}.mark{width:30px;height:30px}nav button{font-size:13px;padding-inline:6px}.big{font-size:34px}.kpis{gap:10px}}
+@media (max-width:600px) {
+  header .brand { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; }
+  header .brand h1, header .hello { overflow-wrap:anywhere; }
+  header .brand small { display:block; }
+  header .brand .who { grid-column:1 / -1; display:flex; flex-wrap:wrap; margin:0; }
+  header #cloud-status { flex:1 1 8rem; min-width:0; }
+  header .who .chip { flex:none; min-width:44px; min-height:44px; }
+  header .hello { padding-right:0; }
+  header .hello > span:last-child { flex-basis:100%; }
+  header .brand .mobile-logo { display:block; max-width:18vw; height:auto; max-height:30px; margin:0; }
+}
+.mobile-logo { display:none; }
 @media(max-height:500px) and (orientation:landscape){header{position:static}}
 @media(prefers-reduced-motion:reduce){.track i,.toast,.tip{transition:none}}
 </style>
@@ -1183,8 +1195,8 @@ function render(){
   const d=new Date(),dt=d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
   root.innerHTML=`<header><div class="wrap">
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div>
-    <div class="who"><small id="cloud-status">${demoMode?'Teste · salvo neste navegador':connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
-   <div class="hello">${uniImg('unihead unihead2')}<b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${u.role==='senior'?'Sênior':'Operador'}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
+    ${uniImg('unihead mobile-logo')}<div class="who"><small id="cloud-status">${demoMode?'Teste · salvo neste navegador':connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
+   <div class="hello"><b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${u.role==='senior'?'Sênior':'Operador'}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
    ${dbar}${vs.length>1?`<nav role="tablist">${vs.map(([k,l])=>`<button role="tab" type="button" data-v="${k}" aria-selected="${k===view}">${l}</button>`).join('')}</nav>`:''}
   </div></header><main class="wrap">${body}</main>`;
   donaSync();
