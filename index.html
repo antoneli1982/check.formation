@@ -639,7 +639,9 @@ const TEMPLATE='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
 const STATE_RE=/(<script type="application\/json" id="state">)[\s\S]*?(<\/script>)/;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const demoMode=new URLSearchParams(location.search).get('modo')==='teste';
+const preferenceKey=k=>demoMode?'cf-teste:'+k:k;
+const ls={get(k,d){try{const v=localStorage.getItem(preferenceKey(k));return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(preferenceKey(k),JSON.stringify(v))}catch(e){}}};
 /* SHA-256 compacto (senhas não ficam em texto puro na página) */
 function sha256(str){const K=[],H=[];let n=2,c=0;const isP=x=>{for(let i=2;i*i<=x;i++)if(x%i==0)return 0;return 1},fr=x=>(x-(x|0))*4294967296|0;
  while(c<64){if(isP(n)){if(c<8)H[c]=fr(Math.pow(n,1/2));K[c++]=fr(Math.cbrt(n))}n++}
@@ -689,6 +691,81 @@ const tables=['users','tasks','depts','records'];
 const snapshots={};
 let db, api, authApi, auth, profileKey, baseline, busy=false, connected=false, ready=false;
 let accessMessage='Conectando ao Firebase…';
+const demoStore='cf-simulacao-v1', demoSession='cf-simulacao-perfil';
+function demoLoginKey(value){return value.trim().toLowerCase().replace(/^operador\s+([123])$/,'operador$1')}
+function sampleWorkspace(){
+  const users={},tasks={};
+  for(let n=0;n<=3;n++){
+    const login=n?'Operador '+n:'ADM',salt=newSalt();
+    users['demo'+n]={id:'demo'+n,name:login,login,email:'equipe@example.test',role:n?'op':'senior',on:true,depts:['d1'],salt,hash:hashPw(salt,'123')};
+  }
+  ['Conferir o posto de trabalho','Registrar a inspeção do turno','Conferir os equipamentos','Organizar os materiais'].forEach((title,n)=>{
+    tasks['id_'+(n+1)]={id:n+1,title,desc:'Atividade de simulação.',cat:'Rotina de teste',dept:'d1',on:true,crit:false,assign:n?['demo'+n]:[]};
+  });
+  return {users,tasks,cats:['Rotina de teste'],records:{},depts:{d1:{id:'d1',name:'Operação',on:true}}};
+}
+function readDemo(){const raw=localStorage.getItem(demoStore);return raw?JSON.parse(raw):sampleWorkspace()}
+async function changeDemo(edit){
+  const write=()=>{
+    const data=readDemo();
+    edit(data);
+    localStorage.setItem(demoStore,JSON.stringify(data));
+    return data;
+  };
+  return navigator.locks? navigator.locks.request(demoStore,write):write();
+}
+async function tryDemoLogin(login,password){
+  let state;try{state=readDemo()}catch{return false}
+  const entry=Object.entries(state.users).find(([,u])=>u.on && demoLoginKey(u.login)===demoLoginKey(login));
+  if(!entry || entry[1].hash!==hashPw(entry[1].salt,password))return false;
+  const [key]=entry;
+  sessionStorage.setItem(demoSession,key);
+  const url=new URL(location.href);url.searchParams.set('modo','teste');location.replace(url);return true;
+}
+function leaveDemo(){
+  sessionStorage.removeItem(demoSession);
+  const url=new URL(location.href);url.searchParams.delete('modo');location.replace(url);
+}
+function loadDemo(data){
+  const id=sessionStorage.getItem(demoSession);
+  if(!data.users[id]?.on){leaveDemo();return}
+  profileKey=id;Object.assign(snapshots,data);ready=true;connected=true;refreshCloud();
+}
+async function startDemo(){
+  if(!sessionStorage.getItem(demoSession)){leaveDemo();return}
+  const data=localStorage.getItem(demoStore)?readDemo():await changeDemo(()=>{});
+  loadDemo(data);
+  window.addEventListener('storage',event=>{if(event.key===demoStore && !busy)loadDemo(readDemo())});
+}
+async function saveDemo(changes){
+  const data=await changeDemo(state=>{
+    const actor=state.users[profileKey];
+    if(!actor?.on)throw Error('Perfil de teste inativo');
+    for(const [path,value] of Object.entries(changes)){
+      const [table,key,field]=path.split('/');
+      if(actor.role!=='senior' && (table!=='records' || field || state.records[key] || value?.uid!==actor.id))throw Error('Registro indisponível');
+      if(!key)state[table]=value;
+      else if(value===null)delete state[table][key];
+      else if(field)state[table][key][field]=value;
+      else state[table][key]=value;
+    }
+  });
+  Object.assign(snapshots,data);
+}
+async function saveDemoUser(profile,key,login,password,fields){
+  const data=await changeDemo(state=>{
+    if(state.users[profileKey]?.role!=='senior')throw Error('Perfil sem acesso');
+    if(Object.entries(state.users).some(([k,u])=>k!==key && demoLoginKey(u.login)===demoLoginKey(login)))throw Error('Usuário em uso');
+    const row={...state.users[key],...fields,login};
+    if(password){row.salt=newSalt();row.hash=hashPw(row.salt,password)}
+    state.users[key]=row;
+    if(profile && fields.role==='op')for(const task of Object.values(state.tasks)){
+      if(!fields.depts.includes(task.dept))task.assign=(task.assign||[]).filter(id=>id!==profile.id);
+    }
+  });
+  Object.assign(snapshots,data);
+}
+
 function nextId(){return Date.now()*1000+crypto.getRandomValues(new Uint16Array(1))[0]%1000}
 function refreshCloud(){
   if(busy || !ready)return;
@@ -721,9 +798,9 @@ async function save(){
     for(const id of prior.keys())changes[table+'/'+keyFor(table,id)]=null;
   }
   if(JSON.stringify(S.cats)!==JSON.stringify(baseline.cats))changes.cats=S.cats;
-  busy=true;document.querySelector('#root').inert=true;toast('Salvando no Firebase…');
-  try{await api.update(api.ref(db),changes);toast('Salvo no Firebase');return true}
-  catch(err){toast('Firebase não confirmou a gravação. Tente novamente.');return false}
+  busy=true;document.querySelector('#root').inert=true;toast(demoMode?'Salvando teste…':'Salvando no Firebase…');
+  try{if(demoMode)await saveDemo(changes);else await api.update(api.ref(db),changes);toast(demoMode?'Teste salvo neste navegador':'Salvo no Firebase');return true}
+  catch(err){if(demoMode)Object.assign(snapshots,readDemo());toast('Não foi possível salvar. Tente novamente.');return false}
   finally{busy=false;document.querySelector('#root').inert=false;refreshCloud();render()}
 }
 const FIREBASE_OPTIONS={apiKey:'AIzaSyB4hE17tRfhIm0dZ0xHIvDyo-3U_GoF5Yw',projectId:'checkformation-e38b2',authDomain:'checkformation-e38b2.firebaseapp.com',appId:'1:990833258270:web:3235bdc715768fd1cb630f',databaseURL:'https://checkformation-e38b2-default-rtdb.firebaseio.com'};
@@ -770,6 +847,7 @@ async function enterProfile(identity) {
   authApi.onAuthStateChanged(auth, current => { if (current?.uid !== identity.uid) location.reload(); });
 }
 async function connectCloud() {
+  if(demoMode){await startDemo();return}
   if (!window.isSecureContext || location.protocol !== 'https:') {
     status('Abra o CheckFormation por HTTPS para entrar.'); return;
   }
@@ -811,13 +889,6 @@ async function recoverPassword(form) {
 }
 async function loginWithPassword(login,password) {
   const user=normalized(login);
-  if(user==='adm' && password==='123') {
-    document.getElementById('lgP').value='';
-    document.getElementById('recovery').open=true;
-    document.getElementById('recoveryLogin').value=login.trim();
-    document.getElementById('recoveryEmail').focus();
-    status('Primeiro acesso do ADM. Confirme seu e-mail para definir a senha.');return;
-  }
   const nameKey=await digest(user);
   const alias=(await api.get(api.ref(db,'logins/'+nameKey))).val();
   const email=alias?.email || (user.includes('@') ? user : '');
@@ -876,6 +947,7 @@ async function submitAccess(form) {
   if(button.disabled) return;
   button.disabled=true;
   try {
+    if(form.id==='fLogin' && await tryDemoLogin(form.elements.login.value,form.elements.senha.value))return;
     if(!auth || !db || location.protocol!=='https:') {status('Aguarde a conexão segura com o Firebase.');return;}
     if(form.id==='fRecover') await recoverPassword(form);
     else await loginWithPassword(form.elements.login.value,form.elements.senha.value);
@@ -1065,8 +1137,8 @@ function vEquipe(){
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
     <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
-    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
-    <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
+    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${!demoMode && e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
+    <div><label for="uPassword">${(demoMode?e?.hash:e?.authUid)?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="${demoMode?3:6}" ${(demoMode?e?.hash:e?.authUid)?'':'required'}></div>
     <input id="uRole" type="hidden" value="${sr?'senior':'op'}">
    </div>
    <div class="f" style="margin-top:14px"><label>Departamentos que pode acessar</label>
@@ -1111,7 +1183,7 @@ function render(){
   const d=new Date(),dt=d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
   root.innerHTML=`<header><div class="wrap">
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div>
-    <div class="who"><small id="cloud-status">${connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
+    <div class="who"><small id="cloud-status">${demoMode?'Teste · salvo neste navegador':connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
    <div class="hello">${uniImg('unihead unihead2')}<b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${u.role==='senior'?'Sênior':'Operador'}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
    ${dbar}${vs.length>1?`<nav role="tablist">${vs.map(([k,l])=>`<button role="tab" type="button" data-v="${k}" aria-selected="${k===view}">${l}</button>`).join('')}</nav>`:''}
   </div></header><main class="wrap">${body}</main>`;
@@ -1373,7 +1445,7 @@ document.addEventListener('click',async e=>{
   const d=el.dataset,u=cur();
   if(d.act==='theme')toggleTheme();
   else if(d.act==='showpw'){const p=$('#lgP');p.type=p.type==='password'?'text':'password';el.textContent=p.type==='password'?'Mostrar':'Ocultar'}
-  else if(d.act==='logout'){if(auth){await authApi.signOut(auth);location.reload()}}
+  else if(d.act==='logout'){if(demoMode){leaveDemo();return}if(auth){await authApi.signOut(auth);location.reload()}}
   else if(d.v){view=d.v;ls.set('cf-view-'+u.role,view);editTask=editUser=editDept=null;render();scrollTo(0,0)}
   else if(d.dept){setDept(u,d.dept);filter='Todas';editTask=null;render()}
   else if(d.check){if(el.getAttribute('aria-disabled'))return;check(+d.check)}
@@ -1428,20 +1500,20 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
     editDept=null;await save()}
   if(f.id==='fUser'){
     const profile=editUser?S.users.find(u=>u.id===editUser):null;
-    const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
+    const login=demoMode?$('#uLogin').value.trim():normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
     const role=profile?.role||'op', depts=[...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
     const error=$('#uErr');
-    if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
-    if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && normalized(u.login)===login)){error.textContent='Este login já está em uso.';return}
-    if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
+    if(!name || !/^[a-z0-9._-]{2,30}$/.test(demoMode?demoLoginKey(login):login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
+    if((!demoMode && login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (demoMode?demoLoginKey(u.login)===demoLoginKey(login):normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
+    if((demoMode?(!profile?.hash || password):(!profile?.authUid || password || email!==profile?.email)) && password.length<(demoMode?3:6)){error.textContent=demoMode?'Use pelo menos 3 caracteres no teste.':'Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
     if(role==='op'&&!depts.length){error.textContent='Selecione ao menos um departamento.';return}
     const id=profile?.id||'u'+nextId(), key=profile?keyFor('users',id):'id_'+id;
     if(busy || !connected){error.textContent='Aguarde a conexão para salvar.';return}
     busy=true; f.inert=true; error.textContent='Salvando acesso…';
     try{
-      await setAccess(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
+      await (demoMode?saveDemoUser:setAccess)(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
       editUser=null;toast('Acesso salvo.');
-      if(password && profile?.id===cur()?.id){await authApi.signOut(auth);location.reload();return;}
+      if(password && profile?.id===cur()?.id){if(demoMode){leaveDemo();return}await authApi.signOut(auth);location.reload();return;}
     }catch{error.textContent='Não foi possível salvar. Confira o login, a senha e a conexão.';return}
     finally{busy=false;f.inert=false}
     refreshCloud();render();
