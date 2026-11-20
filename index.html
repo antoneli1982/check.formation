@@ -728,8 +728,7 @@ async function save(){
 }
 const FIREBASE_OPTIONS={apiKey:'AIzaSyB4hE17tRfhIm0dZ0xHIvDyo-3U_GoF5Yw',projectId:'checkformation-e38b2',authDomain:'checkformation-e38b2.firebaseapp.com',appId:'1:990833258270:web:3235bdc715768fd1cb630f',databaseURL:'https://checkformation-e38b2-default-rtdb.firebaseio.com'};
 let appModule, cloudApp;
-let activation = false, waitingForEmail = false;
-const seniorEmailDigest = '68fb2dd58ab369e403c2195e63f6fb1d81c6a9bc7e270072344cc0cdb55ceddb';
+const initialManagerUid='I9v1eFxFGEbTUeJQMQ6f7BonOgJ3';
 const normalized = value => value.trim().toLowerCase();
 async function digest(value) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -741,7 +740,20 @@ function status(message) {
   if (line) line.textContent = message;
 }
 async function enterProfile(identity) {
-  const key = (await api.get(api.ref(db,'members/'+identity.uid))).val();
+  let key = (await api.get(api.ref(db,'members/'+identity.uid))).val();
+  if (!key && identity.uid === initialManagerUid) {
+    const original=(await api.get(api.ref(db,'users/0'))).val();
+    if (!original?.on || original.role!=='senior' || original.authUid) throw Error('profile');
+    const mailbox=normalized(identity.email);
+    const loginHash=await digest('adm'), emailHash=await digest(mailbox);
+    await api.update(api.ref(db),{
+      ['members/'+identity.uid]:'0',
+      ['logins/'+loginHash]:{key:'0',email:mailbox},
+      ['mailboxes/'+emailHash+'/'+loginHash]:mailbox,
+      'users/0/login':'ADM','users/0/email':mailbox,'users/0/authEmail':mailbox,'users/0/authUid':identity.uid
+    });
+    key='0';
+  }
   if (typeof key !== 'string') throw Error('profile');
   const paths = [...tables,'cats'];
   await Promise.all(paths.map(async path => { snapshots[path] = (await api.get(api.ref(db,path))).val(); }));
@@ -757,18 +769,6 @@ async function enterProfile(identity) {
   });
   authApi.onAuthStateChanged(auth, current => { if (current?.uid !== identity.uid) location.reload(); });
 }
-async function finishEmail(email) {
-  if (await digest(email) !== seniorEmailDigest) throw Error('email');
-  const identity = (await authApi.signInWithEmailLink(auth,email,location.href)).user;
-  if (!identity.emailVerified) throw Error('email');
-  history.replaceState(null,'',location.pathname);
-  ls.set('cf-activation-email','');
-  awaitingPassword();
-}
-function awaitingPassword() {
-  activation = true; waitingForEmail=false;
-  accessMessage = ''; render();
-}
 async function connectCloud() {
   if (!window.isSecureContext || location.protocol !== 'https:') {
     status('Abra o CheckFormation por HTTPS para entrar.'); return;
@@ -783,14 +783,7 @@ async function connectCloud() {
     const line=document.getElementById('cloud-status');
     if(line) line.textContent=connected?'Firebase conectado':'Sem conexão com o Firebase';
   });
-  if (authApi.isSignInWithEmailLink(auth,location.href)) {
-    waitingForEmail=true;
-    const email=ls.get('cf-activation-email','');
-    if (email) { await finishEmail(email); return; }
-    accessMessage='Confirme o e-mail que recebeu o link.'; render(); return;
-  }
   const identity=auth.currentUser;
-  if(identity?.emailVerified && await digest(normalized(identity.email||''))===seniorEmailDigest) { awaitingPassword(); return; }
   if(identity && !identity.isAnonymous) {
     try { await enterProfile(identity); return; }
     catch { await authApi.signOut(auth); status('Acesso indisponível. Procure o gestor.'); return; }
@@ -798,21 +791,43 @@ async function connectCloud() {
   if(identity) await authApi.signOut(auth);
   status('');
 }
-async function requestActivation(email) {
-  if(waitingForEmail) { await finishEmail(email); return; }
-  if(await digest(email)===seniorEmailDigest) {
-    auth.languageCode='pt-BR';
-    await authApi.sendSignInLinkToEmail(auth,email,{url:location.origin+location.pathname,handleCodeInApp:true});
-    ls.set('cf-activation-email',email);
+async function recoverPassword(form) {
+  const email=normalized(form.elements.email.value);
+  const mailKey=await digest(email);
+  const aliases=(await api.get(api.ref(db,'mailboxes/'+mailKey))).val() || {};
+  const entries=Object.values(aliases);
+  const loginBox=form.querySelector('[data-recovery-login]');
+  const loginField=form.elements.recoveryLogin;
+  if(entries.length>1 && (loginBox.hidden || !loginField.value.trim())) {
+    loginBox.hidden=false; loginField.required=true; loginField.focus();
+    status('Este e-mail atende mais de uma conta. Informe qual usuário deseja recuperar.'); return;
   }
-  status('Se este for o e-mail do Sênior, confira o link na caixa de entrada e no spam.');
+  const recipient=entries.length===1 ? entries[0] : aliases[await digest(normalized(loginField.value))];
+  if(recipient) {
+    auth.languageCode='pt-BR';
+    await authApi.sendPasswordResetEmail(auth,recipient);
+  }
+  status('Se os dados corresponderem a um cadastro, o link para definir a nova senha chegará ao e-mail. Confira também o spam.');
 }
 async function loginWithPassword(login,password) {
-  const nameKey=await digest(normalized(login));
+  const user=normalized(login);
+  if(user==='adm' && password==='123') {
+    document.getElementById('lgP').value='';
+    document.getElementById('recovery').open=true;
+    document.getElementById('recoveryLogin').value=login.trim();
+    document.getElementById('recoveryEmail').focus();
+    status('Primeiro acesso do ADM. Confirme seu e-mail para definir a senha.');return;
+  }
+  const nameKey=await digest(user);
   const alias=(await api.get(api.ref(db,'logins/'+nameKey))).val();
-  if(!alias?.email) throw Error('login');
-  const identity=(await authApi.signInWithEmailAndPassword(auth,alias.email,password)).user;
+  const email=alias?.email || (user.includes('@') ? user : '');
+  if(!email) throw Error('login');
+  const identity=(await authApi.signInWithEmailAndPassword(auth,email,password)).user;
   try { await enterProfile(identity); } catch(err) { await authApi.signOut(auth); throw err; }
+}
+function taggedMailbox(mailbox) {
+  const [local,domain]=mailbox.split('@');
+  return local.split('+')[0]+'+cf'+crypto.randomUUID().replaceAll('-','').slice(0,16)+'@'+domain;
 }
 async function setAccess(profile,key,login,password,fields) {
   const nameKey=await digest(normalized(login));
@@ -821,16 +836,26 @@ async function setAccess(profile,key,login,password,fields) {
   let uid=profile?.authUid, email=profile?.authEmail;
   let secondary, temporary;
   try {
-    if(password) {
+    const mailbox=normalized(fields.email);
+    const mailKey=await digest(mailbox);
+    const oldMailKey=profile?.email ? await digest(normalized(profile.email)) : null;
+    const manager=key==='0';
+    if(manager && mailbox!==normalized(auth.currentUser.email)) throw Error('manager-mail');
+    if(manager && password) await authApi.updatePassword(auth.currentUser,password);
+    if(!manager && (password || !uid || mailbox!==profile?.email)) {
+      if(!password) throw Error('password');
       secondary=appModule.initializeApp(cloudApp.options,'access-'+crypto.randomUUID());
       const secondaryAuth=authApi.initializeAuth(secondary,{persistence:authApi.inMemoryPersistence});
-      email=crypto.randomUUID()+'@accounts.checkformation.invalid';
+      const shared=S.users.some(u=>u.authUid && normalized(u.email||'')===mailbox);
+      email=(shared || mailbox===profile?.authEmail) ? taggedMailbox(mailbox) : mailbox;
       temporary=(await authApi.createUserWithEmailAndPassword(secondaryAuth,email,password)).user;
       uid=temporary.uid;
     }
     if (!uid || !email) throw Error('password');
     if(profile?.authUid && profile.authUid!==uid) changes['members/'+profile.authUid]=null;
     if(oldKey && oldKey!==nameKey && profile?.authUid) changes['logins/'+oldKey]=null;
+    if(oldMailKey && oldKey && (oldMailKey!==mailKey || oldKey!==nameKey)) changes['mailboxes/'+oldMailKey+'/'+oldKey]=null;
+    changes['mailboxes/'+mailKey+'/'+nameKey]=email;
     changes['members/'+uid]=key;
     changes['logins/'+nameKey]={key,email};
     const updates={...fields,login,authUid:uid,authEmail:email};
@@ -846,28 +871,16 @@ async function setAccess(profile,key,login,password,fields) {
     throw err;
   } finally { if(secondary) await appModule.deleteApp(secondary); }
 }
-async function activateSenior(password) {
-  const key='0', profile=(await api.get(api.ref(db,'users/'+key))).val();
-  if(!profile?.on || profile.role!=='senior') throw Error('profile');
-  await setAccess(profile,key,'adm',password,{});
-  await authApi.signOut(auth);
-  activation=false;
-  render();
-  await loginWithPassword('adm',password);
-}
 async function submitAccess(form) {
   const button=form.querySelector('[type=submit]');
   if(button.disabled) return;
   button.disabled=true;
   try {
     if(!auth || !db || location.protocol!=='https:') {status('Aguarde a conexão segura com o Firebase.');return;}
-    if(form.id==='fSenior') await requestActivation(normalized(form.elements.email.value));
-    else if(form.id==='fActivate') {
-      if(form.elements.password.value!==form.elements.confirm.value) {status('As senhas precisam ser iguais.');return;}
-      await activateSenior(form.elements.password.value);
-    } else await loginWithPassword(form.elements.login.value,form.elements.senha.value);
+    if(form.id==='fRecover') await recoverPassword(form);
+    else await loginWithPassword(form.elements.login.value,form.elements.senha.value);
   } catch(err) {
-    let msg=form.id==='fLogin'?'Login ou senha inválidos, ou acesso bloqueado.':'Não foi possível concluir a ativação. Confira o e-mail e solicite um novo link.';
+    let msg=form.id==='fLogin'?'Login ou senha inválidos, ou acesso bloqueado.':'Não foi possível enviar o link. Confira a conexão e tente novamente.';
     if(err.code==='auth/too-many-requests') msg='Muitas tentativas. Aguarde antes de tentar novamente.';
     if(err.code==='auth/network-request-failed') msg='Falha de conexão. Tente novamente.';
     status(msg);
@@ -918,19 +931,18 @@ function vLogin(){
   <div class="lform"><section class="lbox">
    ${uniImg('unilogo')}
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div></div>
-   ${activation ? `<form id="fActivate"><h2>Defina sua senha de Sênior</h2>
-   <div class="f"><label for="firstPass">Nova senha</label><input id="firstPass" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
-   <div class="f"><label for="repeatPass">Confirme a senha</label><input id="repeatPass" name="confirm" type="password" required minlength="8" autocomplete="new-password"></div>
-   <button type="submit" class="btn">Salvar e entrar</button></form>` : `<form id="fLogin" ${waitingForEmail?'hidden':''}>
-    <div class="f"><label for="lgU">Login</label><input id="lgU" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+   <form id="fLogin">
+    <div class="f"><label for="lgU">Usuário</label><input id="lgU" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
     <div class="f"><label for="lgP">Senha</label><div class="pw"><input id="lgP" name="senha" type="password" autocomplete="current-password" required><button type="button" data-act="showpw" aria-controls="lgP">Mostrar</button></div></div>
     <button type="submit" class="btn" style="width:100%">Entrar</button>
-    <p class="note">Se perder a senha, procure o gestor.</p>
    </form>
-   <details ${waitingForEmail?'open':''}><summary>Primeiro acesso do Sênior</summary>
-    <form id="fSenior"><div class="f"><label for="srEmail">E-mail do Sênior</label><input id="srEmail" name="email" type="email" autocomplete="email" required></div>
-    <button type="submit" class="btn ghost">${waitingForEmail?'Confirmar e-mail':'Solicitar primeiro acesso'}</button></form>
-   </details>`}
+   <details id="recovery"><summary>Esqueci a senha</summary>
+    <form id="fRecover">
+      <div class="f"><label for="recoveryEmail">E-mail cadastrado</label><input id="recoveryEmail" name="email" type="email" autocomplete="email" required></div>
+      <div class="f" data-recovery-login hidden><label for="recoveryLogin">Usuário a recuperar</label><input id="recoveryLogin" name="recoveryLogin" autocapitalize="none" autocomplete="username"></div>
+      <button type="submit" class="btn ghost">Enviar link de recuperação</button>
+    </form><p class="note">Se perdeu o acesso ao e-mail, procure o gestor.</p>
+   </details>
    <p id="loginStatus" role="status" aria-live="polite">${esc(accessMessage)}</p><div class="row-end" style="justify-content:center">${themeBtn().replace('class="chip"','class="btn ghost sm"')}</div>
    <p class="byuni">Uma solução <b>UNI · Smart Outsourcing Solutions</b></p>
   </section></div></div>`;
@@ -1053,7 +1065,8 @@ function vEquipe(){
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
     <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
-    <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="8" ${e?.authUid?'':'required'}></div>
+    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
+    <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
     <input id="uRole" type="hidden" value="${sr?'senior':'op'}">
    </div>
    <div class="f" style="margin-top:14px"><label>Departamentos que pode acessar</label>
@@ -1400,7 +1413,7 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.name==='asg'&&t.checked)$('#asgAll').checked=false;
 });
 document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
-  if(['fLogin','fSenior','fActivate'].includes(f.id)){await submitAccess(f);return;}
+  if(['fLogin','fRecover'].includes(f.id)){await submitAccess(f);return;}
   if(!isSr()){toast('Sessão expirada');render();return}
   if(f.id==='fTask'){let cat=$('#tCat').value;if(cat==='__new'){cat=$('#tNewCat').value.trim();if(!cat){toast('Informe a nova categoria');return}if(!S.cats.includes(cat))S.cats.push(cat)}
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
@@ -1415,18 +1428,18 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
     editDept=null;await save()}
   if(f.id==='fUser'){
     const profile=editUser?S.users.find(u=>u.id===editUser):null;
-    const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value;
+    const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
     const role=profile?.role||'op', depts=[...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
     const error=$('#uErr');
     if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
     if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && normalized(u.login)===login)){error.textContent='Este login já está em uso.';return}
-    if((!profile?.authUid || password) && password.length<8){error.textContent='Use pelo menos 8 caracteres na senha.';return}
+    if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
     if(role==='op'&&!depts.length){error.textContent='Selecione ao menos um departamento.';return}
     const id=profile?.id||'u'+nextId(), key=profile?keyFor('users',id):'id_'+id;
     if(busy || !connected){error.textContent='Aguarde a conexão para salvar.';return}
     busy=true; f.inert=true; error.textContent='Salvando acesso…';
     try{
-      await setAccess(profile,key,login,password,{id,name,role,depts,on:profile?.on??true});
+      await setAccess(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
       editUser=null;toast('Acesso salvo.');
       if(password && profile?.id===cur()?.id){await authApi.signOut(auth);location.reload();return;}
     }catch{error.textContent='Não foi possível salvar. Confira o login, a senha e a conexão.';return}
