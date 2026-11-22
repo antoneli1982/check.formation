@@ -661,24 +661,7 @@ const TEMPLATE='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
 const STATE_RE=/(<script type="application\/json" id="state">)[\s\S]*?(<\/script>)/;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const demoMode=new URLSearchParams(location.search).get('modo')==='teste';
-const preferenceKey=k=>demoMode?'cf-teste:'+k:k;
-const ls={get(k,d){try{const v=localStorage.getItem(preferenceKey(k));return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(preferenceKey(k),JSON.stringify(v))}catch(e){}}};
-/* SHA-256 compacto (senhas não ficam em texto puro na página) */
-function sha256(str){const K=[],H=[];let n=2,c=0;const isP=x=>{for(let i=2;i*i<=x;i++)if(x%i==0)return 0;return 1},fr=x=>(x-(x|0))*4294967296|0;
- while(c<64){if(isP(n)){if(c<8)H[c]=fr(Math.pow(n,1/2));K[c++]=fr(Math.cbrt(n))}n++}
- const b=new TextEncoder().encode(str),l=((b.length+9+63)>>6)<<4,w=new Array(l).fill(0);
- for(let i=0;i<b.length;i++)w[i>>2]|=b[i]<<(24-(i%4)*8);w[b.length>>2]|=0x80<<(24-(b.length%4)*8);w[l-1]=b.length*8;
- const r=(x,y)=>(x>>>y)|(x<<(32-y)),h=H.slice();
- for(let j=0;j<l;j+=16){const W=w.slice(j,j+16);let [a,bb,cc,d,e,f,g,hh]=h;
-  for(let i=0;i<64;i++){if(i>15){const x=W[i-15],y=W[i-2];W[i]=(W[i-16]+(r(x,7)^r(x,18)^(x>>>3))+W[i-7]+(r(y,17)^r(y,19)^(y>>>10)))|0}
-   const t1=(hh+(r(e,6)^r(e,11)^r(e,25))+((e&f)^(~e&g))+K[i]+W[i])|0,t2=((r(a,2)^r(a,13)^r(a,22))+((a&bb)^(a&cc)^(bb&cc)))|0;
-   hh=g;g=f;f=e;e=(d+t1)|0;d=cc;cc=bb;bb=a;a=(t1+t2)|0}
-  h[0]=(h[0]+a)|0;h[1]=(h[1]+bb)|0;h[2]=(h[2]+cc)|0;h[3]=(h[3]+d)|0;h[4]=(h[4]+e)|0;h[5]=(h[5]+f)|0;h[6]=(h[6]+g)|0;h[7]=(h[7]+hh)|0}
- return h.map(x=>(x>>>0).toString(16).padStart(8,'0')).join('')}
-const hashPw=(salt,pw)=>sha256(salt+':'+pw);
-const newSalt=()=>Math.random().toString(36).slice(2,10);
-
+const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 /* Guia detalhado de cada atividade: base das respostas da Dona Formatione. Entra na tarefa (campo "guia") e pode ser editado na aba Tarefas. */
 const GUIAS={"Conferir EPIs da equipe (luvas, botina, óculos, protetor auricular)":{"kw":["epi","capacete","mascara","uniforme","equipamento de protecao"],"g":"Para que serve: EPI é o equipamento que protege o corpo. Sem ele, um acidente pequeno vira machucado grave. Por isso se confere antes de começar o serviço.\nComo fazer:\n1. Faça no começo do turno, antes de alguém ir para o pátio ou o galpão.\n2. Olhe pessoa por pessoa, de perto. Confira o seu também.\n3. Luvas: nas mãos, sem rasgo e sem furo.\n4. Botina: nos pés, fechada, com a sola inteira.\n5. Óculos: nos olhos (não na testa), sem lente quebrada ou muito riscada.\n6. Protetor auricular: no ouvido de quem trabalha perto de máquina ou caminhão.\n7. Faltou ou está estragado? A pessoa troca antes de começar. Sem EPI, não começa o serviço.\nNão marque se: alguém ficou trabalhando sem EPI. Avise o sênior na hora.\nO que escrever na observação: quem estava sem o quê e o que foi feito. Estava tudo certo? Escreva \"Todos com EPI completo\".\nExemplo de observação: \"Ajudante novo sem protetor auricular. Entreguei um novo antes de começar.\""},"Verificar extintores e rota de fuga do pátio":{"kw":["extintor","rota de fuga","saida de emergencia"],"g":"Para que serve: o extintor apaga o começo de um incêndio. A rota de fuga é o caminho para sair rápido numa emergência. Os dois têm de estar prontos antes de alguém precisar.\nComo fazer:\n1. Passe por todos os extintores do pátio, um por um.\n2. Lacre: o pino tem de estar preso pelo lacre inteiro.\n3. Pressão: o ponteiro do reloginho tem de estar na faixa verde. Extintor de CO2 não tem reloginho: nele, confira o lacre e a etiqueta.\n4. Validade: olhe a etiqueta. A data não pode estar vencida.\n5. Veja se o extintor está no lugar dele, com a placa, sem amassado e com a mangueira inteira.\n6. Nada na frente: palete, caçamba ou caixa não podem tampar o extintor.\n7. Ande pela rota de fuga inteira, até a saída. O caminho tem de estar livre e a saída tem de abrir.\n8. Tem coisa leve no caminho? Tire na hora e anote.\nNão marque se: há extintor vencido, sem lacre ou com o ponteiro fora do verde, ou rota de fuga travada que você não conseguiu liberar. Avise o sênior.\nO que escrever na observação: qual extintor, onde fica e qual é o problema. Vai vencer no mês que vem? Anote também.\nExemplo de observação: \"Extintor B2 com lacre rompido. Pedi a troca ao sênior.\""},"Inspeção pré-uso dos caminhões roll-on e poliguindaste":{"kw":["pneu","freio","guindaste","veiculo","roll-on","rollon"],"g":"Para que serve: achar o defeito no pátio, antes de o caminhão ir para a rua com carga. Falha de freio, cabo ou gancho com caçamba pesada causa acidente grave.\nComo fazer:\n1. Faça em cada caminhão que vai sair hoje, antes da primeira viagem, com ele parado e freado.\n2. Pneus: cheios, sem corte, sem bolha, com desenho na borracha e com todas as porcas da roda.\n3. Olhe o chão embaixo do caminhão: não pode ter mancha nova de óleo.\n4. Óleo: confira o nível do óleo do motor e do óleo hidráulico (o que move o braço).\n5. Freios: teste o pedal e o freio de mão antes de sair do lugar.\n6. Cabos de aço e correntes: sem fio partido, sem amassado e sem ferrugem forte.\n7. Ganchos: sem trinca, sem estar abertos e com a trava funcionando.\n8. Braço e mangueiras: sem vazamento. Suba e desça o braço uma vez, sem carga.\n9. Luzes, setas, buzina e alarme de ré funcionando.\nNão marque se: achou problema em freio, pneu, cabo, gancho ou vazamento. Esse caminhão não sai. Avise o sênior.\nO que escrever na observação: o número do caminhão e o que achou, mesmo que pareça pequeno.\nExemplo de observação: \"Roll-on 04: pneu traseiro com desgaste. Avisei o sênior, troca agendada.\""},"Aferir balança rodoviária com peso-padrão":{"kw":["pesagem","peso padrao","calibr"],"g":"Para que serve: conferir se a balança pesa certo. Balança errada faz a empresa cobrar ou pagar errado, e o peso que vai no documento da carga sai errado.\nComo fazer:\n1. Faça antes da primeira pesagem do dia.\n2. Veja se a plataforma está limpa e solta: sem pedra, barro ou material preso embaixo ou nas bordas.\n3. Com a balança vazia, o visor tem de marcar zero.\n4. Coloque o peso-padrão na plataforma. É o peso de teste, que tem o valor conhecido.\n5. Espere o número parar e leia.\n6. Compare com o valor do peso-padrão. A diferença tem de ficar dentro da tolerância que o sênior passou. Não sabe qual é? Pergunte a ele.\n7. Tire o peso e veja se o visor volta para zero.\nNão marque se: a balança não zera ou a diferença passou da tolerância. Não pese cargas e avise o sênior para chamar o técnico.\nO que escrever na observação: sempre os dois números, o do peso-padrão e o que a balança marcou.\nExemplo de observação: \"Peso-padrão 1.000 kg. A balança marcou 1.020 kg. Diferença de 20 kg, sênior avisado.\""},"Emitir e conferir MTRs das coletas do dia":{"kw":["manifesto","sinir","cetesb","cadri"],"g":"Para que serve: o MTR é o documento que acompanha o resíduo no caminhão. Ele diz o que é, de quem é, quem leva e para onde vai. Sem o MTR certo, a carga não pode sair e a empresa pode ser multada.\nComo fazer:\n1. Pegue a lista das coletas programadas para hoje.\n2. Para cada coleta, emita o MTR no sistema (SINIR ou CETESB) antes de o caminhão sair.\n3. Confira o gerador: o cliente de onde o resíduo sai.\n4. Confira o transportador, a placa do caminhão e o motorista.\n5. Confira o destinador: o lugar para onde o resíduo vai.\n6. Confira o tipo de resíduo, a classe e a quantidade. Tem de bater com a carga de verdade.\n7. Faltou documento do cliente (por exemplo, o CADRI, quando for exigido)? Não emita por conta própria. Pergunte ao sênior.\n8. Entregue o MTR ao motorista antes da saída.\n9. No fim, conte: o número de MTRs tem de ser igual ao número de coletas do dia.\nNão marque se: alguma coleta ficou sem MTR ou com dado errado. Essa carga não sai. Sistema fora do ar? Avise o sênior; a carga espera.\nO que escrever na observação: coleta reagendada, MTR corrigido ou sistema fora do ar, com o nome do cliente e a hora.\nExemplo de observação: \"Sistema fora do ar das 8h às 9h. Avisei o sênior. O MTR foi emitido antes de a carga sair.\""},"Conferir segregação na área de triagem":{"kw":["triagem","baia","separacao","separar","mistur","classe ii","classe 2"],"g":"Para que serve: cada resíduo tem o seu lugar. Misturado, o material não pode ser reciclado. E resíduo perigoso no meio do comum contamina tudo e pode causar acidente.\nComo fazer:\n1. Ande por todas as baias da triagem. Baia é o espaço separado para cada material.\n2. Cada baia tem de ter uma placa com o nome do material, fácil de ler.\n3. Olhe dentro: só pode ter o material da placa.\n4. Classe I é o resíduo perigoso: óleo, tinta, solvente, pilha, lâmpada, embalagem suja de produto químico. Fica no lugar próprio dele, nunca junto do resto.\n5. Classe II é o resíduo comum: papel, plástico, metal, vidro, madeira.\n6. Nos coletores coloridos: azul é papel, vermelho é plástico, amarelo é metal, verde é vidro.\n7. Material comum no lugar errado? Leve para a baia certa.\n8. Achou resíduo perigoso no meio do comum? Não mexa sem luva e óculos. Avise o sênior.\nNão marque se: há resíduo perigoso misturado com o comum. Avise o sênior.\nO que escrever na observação: qual baia, o que estava errado e o que você fez.\nExemplo de observação: \"Baia de Classe I sem placa de identificação. Avisei o sênior.\""},"Limpeza e organização do galpão":{"kw":["varrer","varricao","limpar","arrumar","faxina"],"g":"Para que serve: galpão sujo e bagunçado causa tropeço, corte e incêndio. Limpo e arrumado, o próximo turno começa seguro.\nComo fazer:\n1. Faça no fim do turno, com as máquinas desligadas.\n2. Recolha os restos de material do chão e leve cada um para a baia certa.\n3. Varra o chão.\n4. Viu óleo ou outro líquido no chão? Cubra com areia ou manta absorvente, recolha e avise o sênior.\n5. Deixe livres os corredores, as saídas, os extintores e os quadros de energia.\n6. Guarde as ferramentas e os equipamentos no lugar.\n7. Deixe as pilhas e os fardos firmes, sem risco de cair.\n8. Dê uma última volta olhando tudo antes de sair.\nNão marque se: ficou parte sem limpar porque não deu tempo ou faltou gente. Escreva o motivo e avise o sênior.\nO que escrever na observação: o que ficou sem fazer e por quê, ou algo quebrado que você viu.\nExemplo de observação: \"Galpão 2 sem varrição por falta de equipe. Avisei o sênior.\""},"Registrar saldo de caçambas no pátio":{"kw":["contagem","contar","quantas cacambas","estoque"],"g":"Para que serve: saber quantas caçambas vazias a empresa tem para atender os clientes amanhã. Com a contagem errada, falta caçamba na hora da entrega.\nComo fazer:\n1. Faça no fim do turno, depois que os caminhões voltaram.\n2. Ande pelo pátio e conte uma por uma. Não conte de cabeça.\n3. Conte separado por tipo e por tamanho.\n4. Como disponível, conte só as vazias e em bom estado.\n5. Conte à parte as quebradas e as que estão no conserto.\n6. Escreva os números na observação. Nesta tarefa, a observação é o próprio registro.\n7. Vai faltar algum tipo para as entregas de amanhã? Escreva e avise o sênior.\nNão marque se: você não contou no pátio hoje. Não copie o número de ontem.\nO que escrever na observação: quantas disponíveis de cada tipo e quantas em manutenção.\nExemplo de observação: \"12 caçambas disponíveis, 4 em manutenção. Falta caçamba de 5 m³ para amanhã.\""},"Verificar vazamentos na área de armazenamento Classe I":{"kw":["classe i","classe 1","tambor","contencao","perigoso","mitigacao"],"g":"Para que serve: Classe I é o resíduo perigoso (óleo, tinta, solvente, produto químico). Se vazar, faz mal às pessoas, contamina o chão e a água, e a empresa pode ser multada.\nComo fazer:\n1. Antes de entrar na área, coloque luvas, óculos e botina.\n2. Olhe o chão em volta e embaixo dos tambores: não pode ter mancha nem poça.\n3. Bacia de contenção: é a bandeja ou mureta que segura o líquido se um tambor vazar. Tem de estar seca e sem rachadura.\n4. Tem água de chuva na bacia? Avise o sênior. Essa água pode estar contaminada e não vai para o ralo.\n5. Tambores: fechados, em pé, sem amassado fundo, sem ferrugem e sem estufar.\n6. Cada tambor com etiqueta dizendo o que tem dentro.\n7. Kit de mitigação (manta absorvente, areia, pá e saco): completo e fácil de pegar.\n8. Veja se a área está coberta, com placa de aviso e sem nada que não é de lá.\nSe achar vazamento: afaste as pessoas, não pise no líquido e avise o sênior na hora. Só segure o vazamento com o kit se você foi treinado e está de EPI.\nNão marque se: há vazamento sem resolver ou o kit está incompleto. Avise o sênior.\nO que escrever na observação: qual tambor, onde, o que viu e o que foi feito.\nExemplo de observação: \"Bacia de contenção com água de chuva. Avisei o sênior e a água foi retirada.\""},"Conferir lacres e identificação das caçambas antes da saída":{"kw":["lacre da cacamba","adesivo","numero da cacamba","rotulo"],"g":"Para que serve: o lacre mostra que ninguém mexeu na carga no caminho. A identificação mostra qual é a caçamba e o que vai dentro. Com os dois certos, a carga bate com o documento e chega ao destino certo.\nComo fazer:\n1. Faça em cada caçamba carregada, antes de o caminhão sair.\n2. Identificação: o número ou adesivo da caçamba tem de estar no lugar e fácil de ler.\n3. Esse número tem de ser o mesmo do documento da carga (MTR ou ordem de coleta).\n4. Caçamba com resíduo perigoso precisa do rótulo próprio. Na dúvida, pergunte ao sênior.\n5. Lacre: tem de estar colocado, inteiro e bem fechado. Puxe de leve para testar.\n6. Se o número do lacre é anotado no documento, confira se é o mesmo.\n7. Veja se a tampa ou a lona está fechada e presa, e se nada escorre ou cai da caçamba.\nNão marque se: há caçamba sem lacre, com lacre rompido ou sem identificação. Ela não sai até corrigir. Avise o sênior.\nO que escrever na observação: o número da caçamba e o que estava errado.\nExemplo de observação: \"Caçamba 37 sem adesivo de identificação. Avisei o sênior antes da saída.\""}};
 /* Periodicidade: D diária, S semanal (seg–dom), M mensal, A anual. warn = quantos dias antes do fim do período a tarefa fica vermelha. */
@@ -734,81 +717,6 @@ const tables=['users','tasks','depts','records'];
 const snapshots={};
 let db, api, authApi, auth, profileKey, baseline, busy=false, connected=false, ready=false;
 let accessMessage='Conectando ao Firebase…';
-const demoStore='cf-simulacao-v1', demoSession='cf-simulacao-perfil';
-function demoLoginKey(value){return value.trim().toLowerCase().replace(/^operador\s+([123])$/,'operador$1')}
-function sampleWorkspace(){
-  const users={},tasks={};
-  for(let n=0;n<=3;n++){
-    const login=n?'Operador '+n:'ADM',salt=newSalt();
-    users['demo'+n]={id:'demo'+n,name:login,login,email:'equipe@example.test',role:n?'op':'senior',on:true,depts:['d1'],salt,hash:hashPw(salt,'123')};
-  }
-  ['Conferir o posto de trabalho','Registrar a inspeção do turno','Conferir os equipamentos','Organizar os materiais'].forEach((title,n)=>{
-    tasks['id_'+(n+1)]={id:n+1,title,desc:'Atividade de simulação.',cat:'Rotina de teste',dept:'d1',on:true,crit:false,freq:['D','D','S','M'][n],assign:n?['demo'+n]:[]};
-  });
-  return {users,tasks,cats:['Rotina de teste'],records:{},depts:{d1:{id:'d1',name:'Operação',on:true}}};
-}
-function readDemo(){const raw=localStorage.getItem(demoStore);return raw?JSON.parse(raw):sampleWorkspace()}
-async function changeDemo(edit){
-  const write=()=>{
-    const data=readDemo();
-    edit(data);
-    localStorage.setItem(demoStore,JSON.stringify(data));
-    return data;
-  };
-  return navigator.locks? navigator.locks.request(demoStore,write):write();
-}
-async function tryDemoLogin(login,password){
-  let state;try{state=readDemo()}catch{return false}
-  const entry=Object.entries(state.users).find(([,u])=>u.on && demoLoginKey(u.login)===demoLoginKey(login));
-  if(!entry || entry[1].hash!==hashPw(entry[1].salt,password))return false;
-  const [key]=entry;
-  sessionStorage.setItem(demoSession,key);
-  const url=new URL(location.href);url.searchParams.set('modo','teste');location.replace(url);return true;
-}
-function leaveDemo(){
-  sessionStorage.removeItem(demoSession);
-  const url=new URL(location.href);url.searchParams.delete('modo');location.replace(url);
-}
-function loadDemo(data){
-  const id=sessionStorage.getItem(demoSession);
-  if(!data.users[id]?.on){leaveDemo();return}
-  profileKey=id;Object.assign(snapshots,data);ready=true;connected=true;refreshCloud();
-}
-async function startDemo(){
-  if(!sessionStorage.getItem(demoSession)){leaveDemo();return}
-  const data=localStorage.getItem(demoStore)?readDemo():await changeDemo(()=>{});
-  loadDemo(data);
-  window.addEventListener('storage',event=>{if(event.key===demoStore && !busy)loadDemo(readDemo())});
-}
-async function saveDemo(changes){
-  const data=await changeDemo(state=>{
-    const actor=state.users[profileKey];
-    if(!actor?.on)throw Error('Perfil de teste inativo');
-    for(const [path,value] of Object.entries(changes)){
-      const [table,key,field]=path.split('/');
-      if(actor.role!=='senior' && (table!=='records' || field || state.records[key] || value?.uid!==actor.id))throw Error('Registro indisponível');
-      if(!key)state[table]=value;
-      else if(value===null)delete state[table][key];
-      else if(field)state[table][key][field]=value;
-      else state[table][key]=value;
-    }
-  });
-  Object.assign(snapshots,data);
-}
-async function saveDemoUser(profile,key,login,password,fields){
-  const data=await changeDemo(state=>{
-    if(state.users[profileKey]?.role!=='senior')throw Error('Perfil sem acesso');
-    if(Object.entries(state.users).some(([k,u])=>k!==key && demoLoginKey(u.login)===demoLoginKey(login)))throw Error('Usuário em uso');
-    const row={...state.users[key],...fields,login};
-    if(password){row.salt=newSalt();row.hash=hashPw(row.salt,password)}
-    state.users[key]=row;
-    if(profile && fields.role==='op')for(const task of Object.values(state.tasks)){
-      if(!fields.depts.includes(task.dept))task.assign=(task.assign||[]).filter(id=>id!==profile.id);
-    }
-  });
-  Object.assign(snapshots,data);
-}
-
 function nextId(){return Date.now()*1000+crypto.getRandomValues(new Uint16Array(1))[0]%1000}
 function refreshCloud(){
   if(busy || !ready)return;
@@ -841,9 +749,9 @@ async function save(){
     for(const id of prior.keys())changes[table+'/'+keyFor(table,id)]=null;
   }
   if(JSON.stringify(S.cats)!==JSON.stringify(baseline.cats))changes.cats=S.cats;
-  busy=true;document.querySelector('#root').inert=true;toast(demoMode?'Salvando teste…':'Salvando no Firebase…');
-  try{if(demoMode)await saveDemo(changes);else await api.update(api.ref(db),changes);toast(demoMode?'Teste salvo neste navegador':'Salvo no Firebase');return true}
-  catch(err){if(demoMode)Object.assign(snapshots,readDemo());toast('Não foi possível salvar. Tente novamente.');return false}
+  busy=true;document.querySelector('#root').inert=true;toast('Salvando no Firebase…');
+  try{await api.update(api.ref(db),changes);toast('Salvo no Firebase');return true}
+  catch(err){toast('Não foi possível salvar. Tente novamente.');return false}
   finally{busy=false;document.querySelector('#root').inert=false;refreshCloud();render()}
 }
 const FIREBASE_OPTIONS={apiKey:'AIzaSyB4hE17tRfhIm0dZ0xHIvDyo-3U_GoF5Yw',projectId:'checkformation-e38b2',authDomain:'checkformation-e38b2.firebaseapp.com',appId:'1:990833258270:web:3235bdc715768fd1cb630f',databaseURL:'https://checkformation-e38b2-default-rtdb.firebaseio.com'};
@@ -890,7 +798,6 @@ async function enterProfile(identity) {
   authApi.onAuthStateChanged(auth, current => { if (current?.uid !== identity.uid) location.reload(); });
 }
 async function connectCloud() {
-  if(demoMode){await startDemo();return}
   if (!window.isSecureContext || location.protocol !== 'https:') {
     status('Abra o CheckFormation por HTTPS para entrar.'); return;
   }
@@ -923,7 +830,7 @@ async function recoverPassword(form) {
     loginBox.hidden=false; loginField.required=true; loginField.focus();
     status('Este e-mail atende mais de uma conta. Informe qual usuário deseja recuperar.'); return;
   }
-  const recipient=entries.length===1 ? entries[0] : aliases[await digest(normalized(loginField.value))];
+  const recipient=entries.length===0 ? email : entries.length===1 ? entries[0] : aliases[await digest(normalized(loginField.value))];
   if(recipient) {
     auth.languageCode='pt-BR';
     await authApi.sendPasswordResetEmail(auth,recipient);
@@ -932,9 +839,11 @@ async function recoverPassword(form) {
 }
 async function loginWithPassword(login,password) {
   const user=normalized(login);
-  const nameKey=await digest(user);
-  const alias=(await api.get(api.ref(db,'logins/'+nameKey))).val();
-  const email=alias?.email || (user.includes('@') ? user : '');
+  let email=user;
+  if(!user.includes('@')){
+    const alias=await api.get(api.ref(db,'logins/'+await digest(user)));
+    email=alias.val()?.email;
+  }
   if(!email) throw Error('login');
   const identity=(await authApi.signInWithEmailAndPassword(auth,email,password)).user;
   try { await enterProfile(identity); } catch(err) { await authApi.signOut(auth); throw err; }
@@ -990,12 +899,12 @@ async function submitAccess(form) {
   if(button.disabled) return;
   button.disabled=true;
   try {
-    if(form.id==='fLogin' && await tryDemoLogin(form.elements.login.value,form.elements.senha.value))return;
     if(!auth || !db || location.protocol!=='https:') {status('Aguarde a conexão segura com o Firebase.');return;}
     if(form.id==='fRecover') await recoverPassword(form);
     else await loginWithPassword(form.elements.login.value,form.elements.senha.value);
   } catch(err) {
     let msg=form.id==='fLogin'?'Login ou senha inválidos, ou acesso bloqueado.':'Não foi possível enviar o link. Confira a conexão e tente novamente.';
+    if(form.id==='fLogin' && form.elements.senha.value==='123') msg='Use a senha da conta Firebase. A senha 123 era da simulação local. Se necessário, use Esqueci a senha.';
     if(err.code==='auth/too-many-requests') msg='Muitas tentativas. Aguarde antes de tentar novamente.';
     if(err.code==='auth/network-request-failed') msg='Falha de conexão. Tente novamente.';
     status(msg);
@@ -1047,7 +956,7 @@ function vLogin(){
    ${uniImg('unilogo')}
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div></div>
    <form id="fLogin">
-    <div class="f"><label for="lgU">Usuário</label><input id="lgU" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+    <div class="f"><label for="lgU">Usuário ou e-mail cadastrado</label><input id="lgU" name="login" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
     <div class="f"><label for="lgP">Senha</label><div class="pw"><input id="lgP" name="senha" type="password" autocomplete="current-password" required><button type="button" data-act="showpw" aria-controls="lgP">Mostrar</button></div></div>
     <button type="submit" class="btn" style="width:100%">Entrar</button>
    </form>
@@ -1195,8 +1104,8 @@ function vEquipe(){
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
     <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
-    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${!demoMode && e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
-    <div><label for="uPassword">${(demoMode?e?.hash:e?.authUid)?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="${demoMode?3:6}" ${(demoMode?e?.hash:e?.authUid)?'':'required'}></div>
+    <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
+    <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
     <input id="uRole" type="hidden" value="${sr?'senior':'op'}">
    </div>
    <div class="f" style="margin-top:14px"><label>Departamentos que pode acessar</label>
@@ -1241,7 +1150,7 @@ function render(){
   const d=new Date(),dt=d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
   root.innerHTML=`<header><div class="wrap">
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div>
-    ${uniImg('unihead mobile-logo')}<div class="who"><small id="cloud-status">${demoMode?'Teste · salvo neste navegador':connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
+    ${uniImg('unihead mobile-logo')}<div class="who"><small id="cloud-status">${connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
    <div class="hello"><b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${u.role==='senior'?'Sênior':'Operador'}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
    ${dbar}${vs.length>1?`<nav role="tablist">${vs.map(([k,l])=>`<button role="tab" type="button" data-v="${k}" aria-selected="${k===view}">${l}</button>`).join('')}</nav>`:''}
   </div></header><main class="wrap">${body}</main>`;
@@ -1506,7 +1415,7 @@ document.addEventListener('click',async e=>{
   const d=el.dataset,u=cur();
   if(d.act==='theme')toggleTheme();
   else if(d.act==='showpw'){const p=$('#lgP');p.type=p.type==='password'?'text':'password';el.textContent=p.type==='password'?'Mostrar':'Ocultar'}
-  else if(d.act==='logout'){if(demoMode){leaveDemo();return}if(auth){await authApi.signOut(auth);location.reload()}}
+  else if(d.act==='logout'){if(auth){await authApi.signOut(auth);location.reload()}}
   else if(d.v){view=d.v;ls.set('cf-view-'+u.role,view);editTask=editUser=editDept=null;render();scrollTo(0,0)}
   else if(d.dept){setDept(u,d.dept);filter='Todas';editTask=null;render()}
   else if(d.check){if(el.getAttribute('aria-disabled'))return;check(+d.check)}
@@ -1562,20 +1471,20 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
     editDept=null;await save()}
   if(f.id==='fUser'){
     const profile=editUser?S.users.find(u=>u.id===editUser):null;
-    const login=demoMode?$('#uLogin').value.trim():normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
+    const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
     const role=profile?.role||'op', depts=[...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
     const error=$('#uErr');
-    if(!name || !/^[a-z0-9._-]{2,30}$/.test(demoMode?demoLoginKey(login):login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
-    if((!demoMode && login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (demoMode?demoLoginKey(u.login)===demoLoginKey(login):normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
-    if((demoMode?(!profile?.hash || password):(!profile?.authUid || password || email!==profile?.email)) && password.length<(demoMode?3:6)){error.textContent=demoMode?'Use pelo menos 3 caracteres no teste.':'Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
+    if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
+    if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
+    if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
     if(role==='op'&&!depts.length){error.textContent='Selecione ao menos um departamento.';return}
     const id=profile?.id||'u'+nextId(), key=profile?keyFor('users',id):'id_'+id;
     if(busy || !connected){error.textContent='Aguarde a conexão para salvar.';return}
     busy=true; f.inert=true; error.textContent='Salvando acesso…';
     try{
-      await (demoMode?saveDemoUser:setAccess)(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
+      await setAccess(profile,key,login,password,{id,name,email,role,depts,on:profile?.on??true});
       editUser=null;toast('Acesso salvo.');
-      if(password && profile?.id===cur()?.id){if(demoMode){leaveDemo();return}await authApi.signOut(auth);location.reload();return;}
+      if(password && profile?.id===cur()?.id){await authApi.signOut(auth);location.reload();return;}
     }catch{error.textContent='Não foi possível salvar. Confira o login, a senha e a conexão.';return}
     finally{busy=false;f.inert=false}
     refreshCloud();render();
