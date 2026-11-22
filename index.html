@@ -675,13 +675,16 @@ function migrate(s){
   s.records.forEach(r=>{if(!r.dept)r.dept=td[r.task]||d0});
   return s}
 let S=migrate(JSON.parse($('#state').textContent));
-let art=null,local=false,view=null,filter='Todas',histDay=null,editTask=null,editUser=null,editDept=null,period=14,histOp='',deptSel={};
+let art=null,local=false,view=null,filter='Pendentes',histDay=null,editTask=null,editUser=null,editDept=null,period=14,histOp='',deptSel={};
 const pad=n=>String(n).padStart(2,'0');
 const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
-const today=()=>ymd(new Date());
+const siteZone='America/Sao_Paulo';
+const dayFormat=new Intl.DateTimeFormat('sv-SE',{timeZone:siteZone,year:'numeric',month:'2-digit',day:'2-digit'});
+const siteDay=value=>dayFormat.format(new Date(value));
+const today=()=>siteDay(Date.now());
 const fmtDay=s=>{const [y,m,d]=s.split('-');return d+'/'+m+'/'+y};
 const fmtDM=s=>{const [y,m,d]=s.split('-');return d+'/'+m};
-const fmtTime=iso=>{const d=new Date(iso);return pad(d.getHours())+':'+pad(d.getMinutes())};
+const fmtTime=iso=>new Date(iso).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',timeZone:siteZone});
 const addDays=(s,n)=>{const [y,m,d]=s.split('-').map(Number);return ymd(new Date(y,m-1,d+n))};
 const first=n=>String(n).split(' ')[0];
 /* ---------- Períodos ---------- */
@@ -724,6 +727,7 @@ function refreshCloud(){
   for(const table of tables)state[table]=Object.values(snapshots[table]||{}).filter(Boolean).map(row=>structuredClone(row));
   for(const t of state.tasks)t.assign=t.assign||[];
   for(const u of state.users)u.depts=u.depts||[];
+  state.records=state.records.filter(r=>!r.voided);
   S=migrate(state);
   signedProfile=snapshots.users?.[profileKey]?.id;
   baseline=structuredClone(S);
@@ -931,20 +935,47 @@ const canDo=(t,u)=>t.on&&(u.role==='senior'||(u.depts.includes(t.dept)&&(!t.assi
 const forUser=(t,u)=>t.dept===curDept(u)&&canDo(t,u);
 const pendIn=(u,dep)=>S.tasks.filter(t=>t.dept===dep&&canDo(t,u)&&!doneRec(t)).length;
 const respLabel=t=>t.assign.length?t.assign.map(userName).map(first).join(', '):'Todos do departamento';
-const opDays=dep=>{const s=new Set(S.records.filter(r=>!dep||r.dept===dep).map(r=>r.day));s.add(today());return s};
 
-async function check(id){
-  const u=cur();if(!u)return;
-  const t=S.tasks.find(x=>x.id===id);if(!t||!forUser(t,u))return;
-  if(doneRec(t)){toast(fq(t)==='D'?'Tarefa já registrada hoje':'Tarefa já registrada neste período');return}
-  const obs=($('#obs'+id)?.value||'').trim(),at=new Date().toISOString();
-  S.records.push({id:nextId(),task:id,dept:t.dept,title:t.title,day:today(),at,uid:u.id,by:u.name,obs});
-  if(await save()){const dr=ls.get('cf-drafts',{});delete dr[id];ls.set('cf-drafts',dr)}
+
+function draftKey(t){return ['cf-draft',cur().id,t.dept,t.id,perOf(fq(t),today()).s].join(':')}
+const allRecords=()=>Object.values(snapshots.records||{}).filter(Boolean);
+async function recordChange(key,transform,success){
+  if(busy || !ready || !connected){toast('Sem conexão. Tente enviar novamente.');return false}
+  busy=true;
+  document.querySelector('#root').inert=true;
+  try{
+    const result=await api.runTransaction(api.ref(db,'records/'+key),transform,{applyLocally:false});
+    toast(result.committed?success:'Este registro já mudou. Confira a atualização.');
+    return result.committed;
+  }catch{toast('O Firebase não confirmou a gravação. Confira a conexão e o acesso.');return false}
+  finally{busy=false;document.querySelector('#root').inert=false;refreshCloud()}
+}
+function recordSlot(t,day){
+  const period=perOf(fq(t),day);
+  const history=allRecords().filter(r=>r.task===t.id && r.day>=period.s && r.day<=period.e);
+  const voids=history.filter(r=>r.voided).sort((a,b)=>b.id-a.id);
+  return period.s+'_'+t.id+(voids.length?'_r'+voids[0].id:'');
+}
+async function check(id,issue=null){
+  const u=cur(),t=S.tasks.find(x=>x.id===id);
+  if(!u || !t || !forUser(t,u))return;
+  if(doneRec(t)){toast('Esta tarefa já foi registrada no período.');return}
+  const day=today(),draft=draftKey(t),obs=($('#obs'+id)?.value||ls.get(draft,'')).trim();
+  const row={id:nextId(),task:id,dept:t.dept,title:t.title,day,at:new Date().toISOString(),uid:u.id,by:u.name,obs,
+    receivedAt:api.serverTimestamp(),result:issue?'desvio':'regular'};
+  if(issue)row.issue=issue;
+  const ok=await recordChange(recordSlot(t,day),current=>current===null?row:undefined,'Salvo no Firebase');
+  if(ok){ls.set(draft,'');render()}
+  return ok;
 }
 async function undo(rid){
-  if(!isSr())return;const r=S.records.find(x=>x.id===rid);
-  if(!await ask('Estornar registro?',`“${r.title}” feito por ${r.by} às ${fmtTime(r.at)} será removido.`))return;
-  S.records=S.records.filter(x=>x.id!==rid);await save();
+  if(!isSr())return;
+  const key=keyFor('records',rid);
+  if(!key)return;
+  const reason=prompt('Qual o motivo do estorno? O registro original ficará no histórico.')?.trim();
+  if(!reason)return;
+  const event={reason,by:cur().name,uid:cur().id,at:api.serverTimestamp()};
+  await recordChange(key,row=>row?.id===rid&&!row.voided?{...row,voided:event}:undefined,'Estorno registrado');
 }
 
 /* ---------- Login ---------- */
@@ -973,6 +1004,28 @@ function vLogin(){
 }
 
 /* ---------- Checklist ---------- */
+function openIssue(id){
+  const u=cur(),t=S.tasks.find(t=>t.id===id);
+  if(!t || !forUser(t,u) || doneRec(t))return;
+  const dlg=document.createElement('dialog');
+  const people=S.users.filter(p=>p.on&&(p.role==='senior'||p.depts.includes(t.dept)));
+  dlg.innerHTML='<form><h2>Registrar desvio</h2><p>'+esc(t.title)+'</p><label>Local<input name="place" required maxlength="120"></label><label>O que foi encontrado?<textarea name="description" required maxlength="500"></textarea></label><label>Responsável<select name="owner" required><option value="">Selecione</option>'+people.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')+'</select></label><label>Prazo<input type="date" name="deadline" required></label><div class="row-end"><button type="button" class="btn ghost">Cancelar</button><button class="btn">Registrar inspeção e desvio</button></div><p role="status"></p></form>';
+  document.body.append(dlg);dlg.addEventListener('close',()=>dlg.remove(),{once:true});
+  dlg.querySelector('[type=button]').onclick=()=>dlg.close();
+  dlg.querySelector('form').onsubmit=async e=>{
+    e.preventDefault();e.stopPropagation();const f=e.target,data=Object.fromEntries(new FormData(f));
+    if(!data.description.trim()||!data.place.trim())return;
+    f.inert=true;
+    try{if(await check(id,data))dlg.close();else f.querySelector('[role=status]').textContent='Confira a conexão ou se a tarefa já foi registrada.'}
+    finally{f.inert=false}
+  };
+  dlg.showModal();
+}
+function handoff(u){
+  const dep=curDept(u),pending=S.tasks.filter(t=>forUser(t,u)&&!doneRec(t)).sort((a,b)=>Number(b.crit)-Number(a.crit));
+  const issues=S.records.filter(r=>r.dept===dep&&r.issue&&!r.issue.closed).sort((a,b)=>a.issue.deadline.localeCompare(b.issue.deadline));
+  return '<h2>Passagem de turno · '+esc(deptName(dep))+'</h2><section class="panel"><h3>Desvios abertos ('+issues.length+')</h3>'+ (issues.map(r=>'<article class="trow"><div><b>'+esc(r.title)+'</b><p>'+esc(r.issue.place)+' · '+esc(r.issue.description)+'</p><p>'+esc(userName(r.issue.owner))+' · '+(r.issue.deadline<today()?'Vencido em ':'Prazo ')+fmtDay(r.issue.deadline)+'</p></div>'+(isSr()?'<button class="btn ghost sm" data-closeissue="'+r.id+'">Encerrar</button>':'')+'</article>').join('')||'<p>Nenhum desvio aberto.</p>')+'</section><section class="panel"><h3>Pendências do checklist ('+pending.length+')</h3>'+ (pending.map(t=>'<p>'+esc(t.title)+(t.crit?' · Crítica':'')+' · '+esc(respLabel(t))+'</p>').join('')||'<p>Nenhuma tarefa pendente para este perfil.</p>')+'</section>';
+}
 function vChecklist(u){
   const day=today(),act=S.tasks.filter(t=>forUser(t,u));
   const R=new Map(act.map(t=>[t.id,doneRec(t,day)])),DU=new Map(act.map(t=>[t.id,due(t,day)]));
@@ -983,14 +1036,17 @@ function vChecklist(u){
   const opts=[['Todas','Todas'],['Pendentes','Pendentes'],...(urg?[['Vencendo','⏰ Vencendo ('+urg+')']]:[]),...(fs.length>1?fs.map(k=>['p:'+k,FREQ[k].g]):[]),...S.cats.filter(c=>act.some(t=>t.cat===c)).map(c=>[c,c])];
   if(!opts.some(o=>o[0]===filter))filter='Todas';
   const list=act.filter(t=>filter==='Todas'||(filter==='Pendentes'?!isDone(t):filter==='Vencendo'?late(t):filter.startsWith('p:')?fq(t)===filter.slice(2):t.cat===filter));
-  const dr=ls.get('cf-drafts',{}),rank=t=>isDone(t)?2:late(t)?0:1;
+  const rank=t=>isDone(t)?2:late(t)?0:1;
   const card=t=>{const r=R.get(t.id),d=DU.get(t.id),lt=late(t),per=d.f!=='D';
    return `<article class="card${r?' done':lt?' late':''}"><button type="button" class="tick" data-check="${t.id}" aria-label="${r?'Concluída':'Marcar como feita'}: ${esc(t.title)}" ${r?'aria-disabled="true"':''}>${r?'<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}</button>
    <h3>${esc(t.title)}${t.crit?'<span class="tag">Crítica</span>':''}${per?`<span class="tag pt">${FREQ[d.f].n} · ${r?esc(perLabel(d)):untilTxt(d)}</span>`:''}${lt?`<span class="tag red">⏰ ${leftTxt(d.left).replace(/^./,c=>c.toUpperCase())}</span>`:''}</h3>
    ${t.desc?`<p class="d">${esc(t.desc)}</p>`:''}
+   ${t.guia?`<details><summary>Como executar</summary><p style="white-space:pre-line">${esc(t.guia)}</p></details>`:''}
+   ${!r?`<div class="acts"><button type="button" class="btn ghost sm" data-issue="${t.id}">Registrar desvio</button></div>`:''}
+   ${r?.issue?`<p><strong>Desvio ${r.issue.closed?'encerrado':'aberto'}</strong> · ${esc(r.issue.description)}</p>`:''}
    ${u.role==='senior'?`<p class="resp">Responsável: ${esc(respLabel(t))}</p>`:''}
    ${r?`<p class="sig">✔ <b>${esc(r.by)}</b> · <b>${fmtDay(r.day)} às ${fmtTime(r.at)}</b>${per?` <span style="color:var(--mute)">· próximo preenchimento a partir de ${fmtDM(addDays(d.p.e,1))}</span>`:''}${r.obs?`<q>${esc(r.obs)}</q>`:''}${u.role==='senior'?` <button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button>`:''}</p>`
-      :`<div class="obs"><label for="obs${t.id}" style="font-weight:500">Observação (opcional)</label><textarea id="obs${t.id}" rows="1" maxlength="500" data-draft="${t.id}" placeholder="Ex.: extintor B2 com lacre rompido">${esc(dr[t.id]||'')}</textarea></div>`}
+      :`<div class="obs"><label for="obs${t.id}" style="font-weight:500">Observação (opcional)</label><textarea id="obs${t.id}" rows="1" maxlength="500" data-draft="${t.id}" placeholder="Ex.: extintor B2 com lacre rompido">${esc(ls.get(draftKey(t),''))}</textarea></div>`}
    </article>`};
   const secs=Object.keys(FREQ).map(k=>[k,list.filter(t=>fq(t)===k)]).filter(x=>x[1].length);
   const body=secs.map(([k,ts])=>{const d=due({freq:k},day),lt=ts.some(late);
@@ -1006,46 +1062,93 @@ function vChecklist(u){
 }
 
 /* ---------- Painel do sênior ---------- */
+function taskPlan(t){return {dept:t.dept,on:!!t.on,freq:fq(t),assign:t.assign||[],crit:!!t.crit,title:t.title}}
+function versionAt(versions,day){const key=Object.keys(versions||{}).filter(k=>k<=day).sort().pop();return key?versions[key]:null}
+function planAt(t,day){
+  if(t.versions)return versionAt(t.versions,day);
+  const created=t.createdDay||bornDay(t);
+  return day>=created?taskPlan(t):null;
+}
+function reviseTask(t,changes){
+  const start=t.createdDay||bornDay(t);
+  t.versions={...(t.versions||{[start]:taskPlan(t)})};
+  Object.assign(t,changes);t.versions[today()]=taskPlan(t);
+}
+function scheduled(dep,day){
+  const cfg=versionAt(dep?.calendars,day);
+  if(!cfg)return null;
+  if((cfg.extra||[]).includes(day))return true;
+  if((cfg.closed||[]).includes(day))return false;
+  return (cfg.week||[]).includes(pday(day).getDay());
+}
+function dailySeries(dep,start,end){
+  const dept=S.depts.find(d=>d.id===dep),series=[];
+  for(let day=start;day<=end;day=addDays(day,1)){
+    const planned=scheduled(dept,day);
+    const observed=S.records.some(r=>r.dept===dep&&r.day===day);
+    if(planned===false || (planned===null&&!observed&&day!==today()))continue;
+    const tasks=S.tasks.map(t=>({id:t.id,...planAt(t,day)})).filter(p=>p.on&&p.dept===dep&&p.freq==='D');
+    const completed=new Map(S.records.filter(r=>r.dept===dep&&r.day===day).map(r=>[r.task,r]));
+    const n=tasks.filter(t=>completed.has(t.id)).length;
+    series.push({d:day,tasks,completed,n,pct:tasks.length?Math.round(n*100/tasks.length):0});
+  }return series;
+}
+function dailyStats(dep,start,end){
+  const series=dailySeries(dep,start,end),past=series.filter(s=>s.d!==end&&s.tasks.length);
+  const expected=past.reduce((n,s)=>n+s.tasks.length,0),executed=past.reduce((n,s)=>n+s.n,0);
+  return {series,past,expected,executed,avg:expected?Math.round(100*executed/expected):0};
+}
+function exclusiveStats(past,uid){
+  let exp=0,ok=0;
+  for(const day of past)for(const task of day.tasks)
+    if(task.assign?.length===1&&task.assign[0]===uid){exp++;if(day.completed.get(task.id)?.uid===uid)ok++}
+  return {exp,ok};
+}
+function dailyMiss(past){
+  const counts=new Map();
+  for(const day of past)for(const t of day.tasks){
+    const item=counts.get(t.id)||{t,m:0,of:0,un:'dias'};item.of++;if(!day.completed.has(t.id))item.m++;counts.set(t.id,item);
+  }
+  return [...counts.values()].filter(x=>x.m);
+}
 function vDash(){
-  const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1)),od=opDays(dep);
-  const days=[];for(let d=start;d<=end;d=addDays(d,1))if(od.has(d))days.push(d);
+  const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1));
   const all=S.tasks.filter(t=>t.on&&t.dept===dep),act=all.filter(t=>fq(t)==='D'),per=all.filter(t=>fq(t)!=='D');
   const ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep));
   const recIn=S.records.filter(r=>r.dept===dep&&r.day>=start&&r.day<=end);
   const done=(t,d)=>S.records.some(r=>r.task===t.id&&r.day===d);
-  const series=days.map(d=>{const n=act.filter(t=>done(t,d)).length;return {d,n,pct:act.length?Math.round(n/act.length*100):0}});
-  const past=series.filter(s=>s.d!==end),avg=past.length?Math.round(past.reduce((a,s)=>a+s.pct,0)/past.length):0;
-  const tday=series.find(s=>s.d===end)||{n:0,pct:0};
+  const {series,past,avg,expected}=dailyStats(dep,start,end);
+  const tday=series.find(s=>s.d===end)||{n:0,pct:0,tasks:[]};
   const perMiss=t=>{const ps=endedPeriods(fq(t),start,end).filter(p=>p.e>=bornDay(t));return {of:ps.length,m:ps.filter(p=>!recOf(t,p)).length}};
   const critPend=[...act.filter(t=>t.crit&&!done(t,end)),...per.filter(t=>t.crit&&!doneRec(t,end)&&due(t,end).urgent)];
-  const critMiss=past.reduce((a,s)=>a+act.filter(t=>t.crit&&!done(t,s.d)).length,0)+per.filter(t=>t.crit).reduce((a,t)=>a+perMiss(t).m,0);
+  const critMiss=past.reduce((a,s)=>a+s.tasks.filter(t=>t.crit&&!s.completed.has(t.id)).length,0)+per.filter(t=>t.crit).reduce((a,t)=>a+perMiss(t).m,0);
   const obsN=recIn.filter(r=>r.obs).length;
-  const byOp=ops.map(u=>{const mine=act.filter(t=>t.assign.includes(u.id));const exp=mine.length*past.length;const ok=past.reduce((a,s)=>a+mine.filter(t=>done(t,s.d)).length,0);
+  const byOp=ops.map(u=>{const {exp,ok}=exclusiveStats(past,u.id);
     const nChecks=recIn.filter(r=>r.uid===u.id).length;const tdMine=all.filter(t=>t.assign.includes(u.id)&&!doneRec(t,end)&&(fq(t)==='D'||due(t,end).urgent)).length;
     return {u,nChecks,pct:exp?Math.round(ok/exp*100):null,pendHoje:tdMine,last:recIn.filter(r=>r.uid===u.id).sort((a,b)=>a.at<b.at?1:-1)[0]}});
   const maxChecks=Math.max(1,...byOp.map(o=>o.nChecks));
-  const miss=[...act.map(t=>({t,m:past.filter(s=>!done(t,s.d)).length,of:past.length,un:'dias'})),...per.map(t=>({t,...perMiss(t),un:'períodos'}))].filter(x=>x.m).sort((a,b)=>b.m-a.m).slice(0,5);
+  const miss=[...dailyMiss(past),...per.map(t=>({t,...perMiss(t),un:'períodos'}))].filter(x=>x.m).sort((a,b)=>b.m-a.m).slice(0,5);
   const obs=recIn.filter(r=>r.obs).sort((a,b)=>a.at<b.at?1:-1).slice(0,6);
   const perRows=per.map(t=>({t,r:doneRec(t,end),d:due(t,end)})).sort((a,b)=>(!!a.r-!!b.r)||(a.d.left-b.d.left));
   return `<div class="head"><h2>Painel · ${esc(deptName(dep))}</h2><div class="filters" style="margin:0">${[7,14,30].map(p=>`<button type="button" data-period="${p}" aria-pressed="${p===period}">${p} dias</button>`).join('')}</div></div>
   <div class="kpis">
-   <div class="kpi"><small>Hoje · tarefas diárias</small><b>${tday.n}/${act.length}</b><span>${tday.pct}% concluído</span></div>
+   <div class="kpi"><small>Hoje · tarefas diárias</small><b>${tday.n}/${tday.tasks.length}</b><span>${tday.pct}% concluído</span></div>
    <div class="kpi${critPend.length?' warn':''}"><small>Críticas pendentes hoje</small><b>${critPend.length}</b><span>${critPend.length?esc(critPend.slice(0,2).map(t=>t.title.split(' ').slice(0,3).join(' ')).join('; '))+(critPend.length>2?'…':''):'tudo em dia'}</span></div>
-   <div class="kpi"><small>Conformidade média</small><b>${avg}%</b><span>${past.length} dias operados antes de hoje</span></div>
+   <div class="kpi"><small>Execução das diárias</small><b>${expected?avg+'%':'Sem base'}</b><span>${past.length} dias operados antes de hoje</span></div>
    <div class="kpi${critMiss?' warn':''}"><small>Críticas não feitas</small><b>${critMiss}</b><span>${obsN} observações no período</span></div>
   </div>
   <div class="dgrid">
    <section class="panel"><h3>Conclusão diária do checklist</h3>
-    <div class="cols" role="img" aria-label="Percentual de tarefas diárias concluídas por dia">${series.map(s=>`<div class="col${s.pct<80?' low':''}" tabindex="0"><em>${s.pct}%</em><i style="height:${Math.max(s.pct,1)}%"></i><span class="tip">${fmtDay(s.d)}${s.d===end?' (hoje)':''}: ${s.n} de ${act.length} · ${s.pct}%</span></div>`).join('')}</div>
+    <div class="cols" role="img" aria-label="Percentual de tarefas diárias concluídas por dia">${series.map(s=>`<div class="col${s.pct<80?' low':''}" tabindex="0"><em>${s.pct}%</em><i style="height:${Math.max(s.pct,1)}%"></i><span class="tip">${fmtDay(s.d)}${s.d===end?' (hoje)':''}: ${s.n} de ${s.tasks.length} · ${s.pct}%</span></div>`).join('')}</div>
     <div class="xl">${series.map(s=>`<span>${s.d===end?'Hoje':fmtDM(s.d)}</span>`).join('')}</div>
-    <p class="note">Só tarefas diárias. Barras em âmbar: dias abaixo de 80% de conclusão. Dias sem nenhum registro neste departamento não aparecem.</p></section>
+    <p class="note">Só tarefas diárias. Barras em âmbar: dias abaixo de 80% de conclusão. Dias previstos sem registro contam como zero. Antes do calendário cadastrado, a base considera somente dias com registro.</p></section>
    <section class="panel"><h3>Tarefas semanais, mensais e anuais</h3>
     ${perRows.length?perRows.map(({t,r,d})=>`<div class="trow"><div><b>${esc(t.title)}</b> <span class="tag pt">${FREQ[d.f].n}</span>${t.crit?' <span class="tag">Crítica</span>':''}${!r&&d.urgent?` <span class="tag red">⏰ ${leftTxt(d.left)}</span>`:''}
      <div class="resp">${esc(perLabel(d))} · ${r?`✔ ${esc(r.by)} em ${fmtDM(r.day)} ${fmtTime(r.at)}`:`pendente, ${untilTxt(d)}`} · ${esc(respLabel(t))}</div></div></div>`).join(''):'<p class="note">Nenhuma tarefa semanal, mensal ou anual neste departamento.</p>'}
    </section>
    <section class="panel"><h3>Desempenho por operador</h3>
     ${byOp.map(o=>`<div class="hbar${o.pct!=null&&o.pct<85?' warn':''}" title="${esc(o.u.name)}: ${o.nChecks} checks no período"><span class="n">${esc(o.u.name)}</span><span class="tr"><i style="width:${o.nChecks/maxChecks*100}%"></i></span><b>${o.nChecks} checks</b></div>
-     <p class="note" style="margin:-2px 0 8px">${o.pct!=null?`Conformidade nas tarefas diárias atribuídas: <b>${o.pct}%</b>`:'Sem tarefas diárias exclusivas'} · ${o.pendHoje?`<span style="color:var(--crit)">${o.pendHoje} pendente${o.pendHoje>1?'s':''} hoje</span>`:'em dia hoje'}${o.last?` · último check ${fmtDM(o.last.day)} ${fmtTime(o.last.at)}`:''}</p>`).join('')||'<p class="note">Nenhum operador ativo neste departamento.</p>'}
+     <p class="note" style="margin:-2px 0 8px">${o.pct!=null?`Execução individual das tarefas diárias exclusivas: <b>${o.pct}%</b>`:'Sem tarefas diárias exclusivas'} · ${o.pendHoje?`<span style="color:var(--crit)">${o.pendHoje} pendente${o.pendHoje>1?'s':''} hoje</span>`:'em dia hoje'}${o.last?` · último check ${fmtDM(o.last.day)} ${fmtTime(o.last.at)}`:''}</p>`).join('')||'<p class="note">Nenhum operador ativo neste departamento.</p>'}
    </section>
    <section class="panel"><h3>Tarefas que mais ficaram sem fazer</h3>
     ${miss.length?miss.map(x=>`<div class="hbar${x.t.crit?' warn':''}"><span class="n" title="${esc(x.t.title)}">${esc(x.t.title)}</span><span class="tr"><i style="width:${x.m/Math.max(1,x.of)*100}%"></i></span><b>${x.m} de ${x.of} ${x.un}</b></div>`).join('')+'<p class="note">Em âmbar: tarefas críticas. Semanais, mensais e anuais contam só os períodos já encerrados.</p>':'<p class="note">Nenhuma falha no período.</p>'}
@@ -1058,7 +1161,7 @@ function vDash(){
 
 /* ---------- Tarefas (sênior) ---------- */
 function vTarefas(){
-  const e=editTask?S.tasks.find(t=>t.id===editTask):null,dep=curDept(cur()),fd=e?e.dept:dep,all=S.tasks.filter(t=>t.dept===dep);
+  const e=editTask?S.tasks.find(t=>t.id===editTask):null,dep=curDept(cur()),fd=e?e.dept:dep,all=S.tasks.filter(t=>t.dept===dep&&!t.archived);
   const asg=e?e.assign:[];
   return `<div class="head"><h2>Tarefas · ${esc(deptName(dep))}</h2><span class="note">${all.filter(t=>t.on).length} ativas de ${all.length} neste departamento</span></div>
   <form class="panel" id="fTask"><h3>${e?'Editar tarefa':'Nova tarefa'}</h3>
@@ -1087,6 +1190,10 @@ function vDeptos(){
   return `<div class="head"><h2>Departamentos</h2><span class="note">${S.depts.filter(d=>d.on).length} ativos de ${S.depts.length}</span></div>
   <form class="panel" id="fDept" autocomplete="off"><h3>${e?'Renomear departamento':'Novo departamento'}</h3>
    <div class="f"><label for="dName">Nome do departamento</label><input id="dName" required maxlength="40" placeholder="Ex.: Manutenção, Balança, Administrativo" value="${esc(e?.name)}"></div>
+   <fieldset><legend>Calendário operacional</legend><label><input type="checkbox" name="configureCalendar"> Aplicar calendário a partir de hoje</label>
+    <div class="checks">${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map((n,i)=>'<label><input type="checkbox" name="weekday" value="'+i+'" '+((versionAt(e?.calendars,today())?.week||[1,2,3,4,5]).includes(i)?'checked':'')+'> '+n+'</label>').join('')}</div>
+    <label>Paradas e feriados (AAAA-MM-DD, separados por vírgula)<input name="closed" value="${esc((versionAt(e?.calendars,today())?.closed||[]).join(', '))}"></label>
+    <label>Dias extras de operação (AAAA-MM-DD)<input name="extra" value="${esc((versionAt(e?.calendars,today())?.extra||[]).join(', '))}"></label></fieldset>
    <p class="err" id="dErr" role="alert"></p>
    <div class="row-end">${e?'<button class="btn ghost" type="button" data-act="cancelDept">Cancelar</button>':''}<button class="btn">${e?'Salvar nome':'Criar departamento'}</button></div>
    <p class="note">Cada departamento tem o seu próprio checklist. Depois de criar: cadastre as tarefas dele na aba <b>Tarefas</b> e libere as pessoas na aba <b>Equipe</b>.</p></form>
@@ -1120,8 +1227,6 @@ function vEquipe(){
 }
 
 /* ---------- Histórico (sênior) ---------- */
-const siteZone='America/Sao_Paulo';
-const allRecords=()=>Object.values(snapshots.records||{}).filter(Boolean);
 let reportStart='',reportEnd='';
 function reportData(start,end){
   const rows=allRecords().filter(r=>r.day>=start&&r.day<=end).sort((a,b)=>a.day.localeCompare(b.day)||a.at.localeCompare(b.at));
@@ -1187,14 +1292,14 @@ async function exportExcel(rows,file,report=null){
 }
 
 /* ---------- Render ---------- */
-const VIEWS={senior:[['dash','Painel'],['global','Relatório global'],['checklist','Checklist'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']],op:[['checklist','Minhas tarefas']]};
+const VIEWS={senior:[['dash','Painel'],['global','Relatório global'],['checklist','Checklist'],['handoff','Passagem de turno'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']],op:[['checklist','Minhas tarefas'],['handoff','Passagem de turno']]};
 function render(){
   const u=cur(),root=$('#root');
   if(!u){root.innerHTML=vLogin();donaSync();if(window.cfMount3D)window.cfMount3D();return}
   const vs=VIEWS[u.role];if(!vs.some(v=>v[0]===view))view=ls.get('cf-view-'+u.role,vs[0][0]);if(!vs.some(v=>v[0]===view))view=vs[0][0];
   const ds=deptsOf(u),dep=curDept(u),glob=view==='global'||view==='equipe'||view==='deptos';
   const body=view==='global'?globalReport():view==='equipe'?vEquipe():view==='deptos'?vDeptos():!dep?`<div class="empty">${u.role==='senior'?'Nenhum departamento ativo. Ative ou crie um na aba Departamentos.':'Nenhum departamento liberado para você. Fale com o sênior.'}</div>`
-    :view==='dash'?vDash():view==='tarefas'?vTarefas():view==='historico'?vHistorico():vChecklist(u);
+    :view==='handoff'?handoff(u):view==='dash'?vDash():view==='tarefas'?vTarefas():view==='historico'?vHistorico():vChecklist(u);
   const dbar=ds.length>1&&!glob?`<div class="dbar" role="group" aria-label="Departamento em que você está preenchendo"><span>Departamento:</span>${ds.map(x=>{const n=pendIn(u,x.id);
     return `<button type="button" data-dept="${x.id}" aria-pressed="${x.id===dep}" title="${n?n+' pendente'+(n>1?'s':'')+' hoje':'Tudo feito hoje'}">${esc(x.name)}${n?`<em>${n}</em>`:''}</button>`}).join('')}</div>`:'';
   const d=new Date(),dt=d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
@@ -1232,13 +1337,13 @@ async function getSample(){if(sampleTried)return sampleNs;sampleTried=true;try{s
 const hasVoice=()=>!!(ttsNs||window.speechSynthesis);
 
 /* --- dados para a Dona (recortados pelo nível de acesso) --- */
-function donaStats(period=14){const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1)),od=opDays(dep),days=[];for(let d=start;d<=end;d=addDays(d,1))if(od.has(d))days.push(d);
+function donaStats(period=14){const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1));
   const all=S.tasks.filter(t=>t.on&&t.dept===dep),act=all.filter(t=>fq(t)==='D'),ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep)),done=(t,d)=>S.records.some(r=>r.task===t.id&&r.day===d);
-  const past=days.filter(d=>d!==end),pct=d=>act.length?Math.round(act.filter(t=>done(t,d)).length/act.length*100):0;
-  const avg=past.length?Math.round(past.reduce((a,d)=>a+pct(d),0)/past.length):0,worst=past.slice().sort((a,b)=>pct(a)-pct(b))[0];
-  const miss=act.map(t=>({t,m:past.filter(d=>!done(t,d)).length})).filter(x=>x.m).sort((a,b)=>b.m-a.m);
-  const critMiss=past.reduce((a,d)=>a+act.filter(t=>t.crit&&!done(t,d)).length,0);
-  const byOp=ops.map(u=>{const mine=act.filter(t=>t.assign.includes(u.id)),exp=mine.length*past.length,ok=past.reduce((a,d)=>a+mine.filter(t=>done(t,d)).length,0);
+  const stats=dailyStats(dep,start,end),past=stats.past.map(s=>s.d),avg=stats.avg;
+  const pct=d=>stats.series.find(s=>s.d===d)?.pct||0,worst=past.slice().sort((a,b)=>pct(a)-pct(b))[0];
+  const miss=dailyMiss(stats.past).sort((a,b)=>b.m-a.m);
+  const critMiss=stats.past.reduce((n,day)=>n+day.tasks.filter(t=>t.crit&&!day.completed.has(t.id)).length,0);
+  const byOp=ops.map(u=>{const {ok,exp}=exclusiveStats(stats.past,u.id);
     return {u,pct:exp?Math.round(ok/exp*100):null,checks:S.records.filter(r=>r.dept===dep&&r.uid===u.id&&r.day>=start).length,pend:all.filter(t=>t.assign.includes(u.id)&&!doneRec(t,end))}});
   const todayDone=all.filter(t=>doneRec(t,end)),todayPend=all.filter(t=>!doneRec(t,end));
   const obs=S.records.filter(r=>r.dept===dep&&r.obs&&r.day>=start).sort((a,b)=>a.at<b.at?1:-1);
@@ -1461,23 +1566,29 @@ document.addEventListener('submit',e=>{if(e.target.id!=='dform')return;e.prevent
 
 /* ---------- Eventos ---------- */
 document.addEventListener('click',async e=>{
-  const el=e.target.closest('[data-act],[data-v],[data-dept],[data-check],[data-undo],[data-f],[data-period],[data-edit],[data-tog],[data-del],[data-uedit],[data-utog],[data-dedit],[data-dtog],[data-ddel],[data-day]');if(!el)return;
+  const el=e.target.closest('[data-act],[data-v],[data-dept],[data-check],[data-issue],[data-closeissue],[data-undo],[data-f],[data-period],[data-edit],[data-tog],[data-del],[data-uedit],[data-utog],[data-dedit],[data-dtog],[data-ddel],[data-day]');if(!el)return;
   const d=el.dataset,u=cur();
   if(d.act==='theme')toggleTheme();
   else if(d.act==='showpw'){const p=$('#lgP');p.type=p.type==='password'?'text':'password';el.textContent=p.type==='password'?'Mostrar':'Ocultar'}
   else if(d.act==='logout'){if(auth){await authApi.signOut(auth);location.reload()}}
   else if(d.v){view=d.v;ls.set('cf-view-'+u.role,view);editTask=editUser=editDept=null;render();scrollTo(0,0)}
-  else if(d.dept){setDept(u,d.dept);histTask='';histOp='';filter='Todas';editTask=null;render()}
+  else if(d.dept){setDept(u,d.dept);histTask='';histOp='';filter='Pendentes';editTask=null;render()}
+  else if(d.issue){openIssue(+d.issue)}
+  else if(d.closeissue && isSr()){
+    const id=+d.closeissue,key=keyFor('records',id),note=prompt('Informe a ação realizada para encerrar o desvio.')?.trim();
+    if(key&&note){const closure={by:u.name,uid:u.id,at:api.serverTimestamp(),note};
+      await recordChange(key,row=>row?.id===id&&row.issue&&!row.issue.closed&&!row.voided?{...row,issue:{...row.issue,closed:closure}}:undefined,'Desvio encerrado')}
+  }
   else if(d.check){if(el.getAttribute('aria-disabled'))return;check(+d.check)}
   else if(d.undo)undo(+d.undo);
   else if(d.f){filter=d.f;render()}
   else if(d.period){period=+d.period;render()}
   else if(!isSr())return;
   else if(d.edit){editTask=+d.edit;render();scrollTo({top:0,behavior:'smooth'})}
-  else if(d.tog){const t=S.tasks.find(x=>x.id===+d.tog);t.on=!t.on;await save()}
-  else if(d.del){const t=S.tasks.find(x=>x.id===+d.del);if(await ask('Excluir tarefa?',`“${t.title}” sai do checklist. Os registros antigos continuam no histórico.`)){S.tasks=S.tasks.filter(x=>x!==t);await save()}}
+  else if(d.tog){const t=S.tasks.find(x=>x.id===+d.tog);reviseTask(t,{on:!t.on});await save()}
+  else if(d.del){const t=S.tasks.find(x=>x.id===+d.del);if(await ask('Excluir tarefa?',`“${t.title}” sai do checklist. Os registros antigos continuam no histórico.`)){reviseTask(t,{on:false,archived:true});await save()}}
   else if(d.uedit){editUser=d.uedit;render();scrollTo({top:0,behavior:'smooth'})}
-  else if(d.utog){const x=S.users.find(y=>y.id===d.utog);x.on=!x.on;toast(x.on?'Acesso liberado':'Acesso bloqueado');await save()}
+  else if(d.utog){const x=S.users.find(y=>y.id===d.utog);x.on=!x.on;await save()}
   else if(d.day){e.preventDefault();histDay=d.day;render()}
   else if(d.act==='cancelTask'){editTask=null;render()}
   else if(d.act==='cancelUser'){editUser=null;render()}
@@ -1486,7 +1597,7 @@ document.addEventListener('click',async e=>{
   else if(d.dtog){const x=S.depts.find(y=>y.id===d.dtog);
     if(x.on&&S.depts.filter(y=>y.on).length===1){toast('Mantenha pelo menos um departamento ativo');return}
     if(x.on&&!await ask('Desativar departamento?',`“${x.name}” some da tela de todos e deixa de contar no painel. Tarefas, acessos e histórico ficam guardados e voltam ao reativar.`))return;
-    x.on=!x.on;toast(x.on?'Departamento ativado':'Departamento desativado');await save()}
+    x.on=!x.on;await save()}
   else if(d.ddel){const x=S.depts.find(y=>y.id===d.ddel);
     if(S.depts.length===1){toast('É preciso ter pelo menos um departamento');return}
     if(S.tasks.some(t=>t.dept===x.id)||S.records.some(r=>r.dept===x.id)){await ask('Não é possível excluir',`“${x.name}” tem tarefas ou histórico de registros. Para tirá-lo de uso sem perder o histórico, use Desativar.`);return}
@@ -1495,7 +1606,7 @@ document.addEventListener('click',async e=>{
   else if(d.act==='xlsFiltered')await exportExcel(historyRows(),'CheckFormation_'+histDay+'_'+(histEnd||histDay));
   else if(d.act==='xlsAll'){const rows=allRecords();if(await ask('Exportar todos os departamentos?',rows.length+' registros de todas as datas.'))await exportExcel(rows.sort((a,b)=>a.at.localeCompare(b.at)),'CheckFormation_completo')}
 });
-document.addEventListener('input',e=>{const id=e.target.dataset?.draft;if(id){const dr=ls.get('cf-drafts',{});dr[id]=e.target.value;ls.set('cf-drafts',dr)}});
+document.addEventListener('input',e=>{const id=e.target.dataset?.draft;if(id){const t=S.tasks.find(t=>t.id===+id);if(cur()&&t)ls.set(draftKey(t),e.target.value)}});
 document.addEventListener('change',e=>{const t=e.target;
   if(t.id==='hDay'){histDay=t.value||today();if(histEnd<histDay)histEnd=histDay;render()}
   if(t.id==='hEnd'){histEnd=t.value>=histDay?t.value:histDay;render()}
@@ -1521,13 +1632,19 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
     const assign=[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value).filter(id=>S.users.some(x=>x.id===id&&x.depts.includes(dept)));
     const v={title:$('#tTitle').value.trim(),desc:$('#tDesc').value.trim(),guia:$('#tGuia').value.trim(),cat,crit:$('#tCrit').value==='1',dept,assign};v.freq=FREQ[$('#tFreq').value]?$('#tFreq').value:'D';if(v.freq!=='D')v.warn=Math.max(0,Math.min(366,Math.round(+$('#tWarn').value||0)));if(!v.title)return;
-    if(editTask)Object.assign(S.tasks.find(t=>t.id===editTask),v);else S.tasks.push({id:nextId(),...v,on:true});
-    toast((editTask?'Tarefa atualizada':'Tarefa adicionada')+(dept!==curDept(cur())?' em '+deptName(dept):''));editTask=null;await save()}
+    if(editTask)reviseTask(S.tasks.find(t=>t.id===editTask),v);else S.tasks.push({id:nextId(),createdDay:today(),...v,on:true});
+    if(await save()){editTask=null;render()}}
   if(f.id==='fDept'){const name=$('#dName').value.trim();if(!name)return;
     if(S.depts.some(x=>x.name.toLowerCase()===name.toLowerCase()&&x.id!==editDept)){$('#dErr').textContent='Já existe um departamento com esse nome.';return}
-    if(editDept){S.depts.find(x=>x.id===editDept).name=name;toast('Departamento atualizado')}
-    else{S.depts.push({id:'d'+(nextId()),name,on:true});toast('Departamento criado')}
-    editDept=null;await save()}
+    const dept=editDept?S.depts.find(x=>x.id===editDept):{id:'d'+nextId(),on:true};
+    if(f.elements.configureCalendar.checked){
+      const dates=key=>f.elements[key].value.split(',').map(v=>v.trim()).filter(Boolean);
+      const closed=dates('closed'),extra=dates('extra'),week=Array.from(f.querySelectorAll('[name=weekday]:checked'),x=>+x.value);
+      if([...closed,...extra].some(v=>!/^\d{4}-\d{2}-\d{2}$/.test(v)||ymd(pday(v))!==v)||extra.some(v=>closed.includes(v))){$('#dErr').textContent='Confira as datas e remova exceções conflitantes.';return}
+      dept.calendars={...dept.calendars,[today()]:{week,closed,extra}};
+    }
+    dept.name=name;if(!editDept)S.depts.push(dept);
+    if(await save()){editDept=null;render()}}
   if(f.id==='fUser'){
     const profile=editUser?S.users.find(u=>u.id===editUser):null;
     const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
