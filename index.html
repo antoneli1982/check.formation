@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#0b3d26">
 <title>CheckFormation</title>
 <script>
+/* Celular: sem cena 3D (economiza dados, bateria e tempo de abertura) */
+if(matchMedia('(max-width:760px)').matches||/Mobi|Android/i.test(navigator.userAgent))document.documentElement.classList.add('no3d');
 if (location.protocol === 'http:' && location.hostname === 'checkformation.unismartsolution.com.br') {
   const secureURL = new URL(location.href);
   secureURL.protocol = 'https:';
@@ -25,7 +27,7 @@ if (location.protocol === 'http:' && location.hostname === 'checkformation.unism
 --bg:light-dark(#f3f6f2,#0a1410);--surf:light-dark(#ffffff,#12201a);--surf2:light-dark(#e9efe8,#182a22);
 --ink:light-dark(#0f1a14,#e7efe9);--mute:light-dark(#4f5f56,#9db3a6);--line:light-dark(#d5ded6,#24382e);
 --pri:light-dark(#0a7b45,#34c07a);--pri-ink:light-dark(#ffffff,#05140c);--bar:light-dark(#0b3d26,#07110d);
---crit:light-dark(#b45309,#f5b544);--crit-bg:light-dark(#fff4e0,#2a2010);--ok-bg:light-dark(#e3f4ea,#0f2d1f);--danger:light-dark(#b42318,#ff7a6e)}
+--crit:light-dark(#b45309,#f5b544);--crit-bg:light-dark(#fff4e0,#2a2010);--ok-bg:light-dark(#e3f4ea,#0f2d1f);--danger:light-dark(#b42318,#ff7a6e);--late-bg:light-dark(#fdeceb,#2a1311)}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -84,6 +86,14 @@ label{font-size:14px;font-weight:600;color:var(--mute);display:block;margin-bott
 .card .d{color:var(--mute);font-size:14px;margin:0}
 .resp{font-size:13px;color:var(--mute);margin:0}
 .tag{font:600 12px Montserrat,sans-serif;color:var(--crit);background:var(--crit-bg);border-radius:6px;padding:2px 8px}
+.tag.pt,.tag.red{white-space:nowrap}.tag.pt{color:var(--mute);background:var(--surf2)}
+.tag.red{color:light-dark(#fff,#1a0805);background:var(--danger)}
+.card.late{border:2px solid var(--danger);background:var(--late-bg)}
+.card.late .tick{border-color:var(--danger)}
+.per{font:800 20px Montserrat,sans-serif;margin:28px 0 4px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+.per small{font:600 13px Montserrat,sans-serif;color:var(--mute)}
+.per.late{border-color:var(--danger)}.per.late small{color:var(--danger)}
+.per+.cat{margin-top:12px}
 .sig{font-size:14px;margin:4px 0 0}.sig b{white-space:nowrap}
 .sig q{display:block;margin-top:4px;color:var(--mute);font-style:italic}
 .obs{margin-top:6px}
@@ -150,6 +160,7 @@ td.t{white-space:nowrap}
 .lform{display:grid;place-items:center;padding:32px max(16px,env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) 16px}
 .lbox{background:var(--surf);color:var(--ink);border:1px solid var(--line);border-radius:20px;padding:28px 24px;width:min(400px,100%)}
 .stage.off,.no3d .stage{display:none}
+@media(max-width:760px){.no3d .lart{display:none}.no3d .lform{padding-top:max(24px,env(safe-area-inset-top))}}
 @media(max-width:760px){.login{grid-template-columns:minmax(0,1fr);background:var(--bar)}.lart{padding:max(16px,env(safe-area-inset-top)) 16px 0;gap:12px}.stage{aspect-ratio:16/11;max-height:44vh}.tod button{padding:5px 9px;min-height:32px;font-size:11px}.tod output{display:none}.lart .txt{display:none}
 .lform{padding:16px 16px calc(24px + env(safe-area-inset-bottom));align-items:start}.lbox{border:0}}
 .lbox .brand{padding:0 0 18px}.lbox .brand small{color:var(--mute);opacity:1}
@@ -238,11 +249,9 @@ table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-bl
 <div class="toast" id="toast" role="status"></div>
 
 <script type="application/json" id="state">{"seq":0,"cats":[],"users":[],"tasks":[],"records":[],"depts":[]}</script>
-<script type="module" onerror="document.documentElement.classList.add('no3d')">
-import * as THREE from 'three';
-import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
-import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
-import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
+<script type="module">
+/* three.js só é baixado no computador (import dinâmico dentro de build) */
+let THREE,RoomEnvironment,RoundedBoxGeometry,mergeGeometries;
 
 const MOBILE=matchMedia('(max-width:760px)').matches||/Mobi|Android/i.test(navigator.userAgent);
 const TS=MOBILE?256:512, TP=MOBILE?128:256;
@@ -333,6 +342,7 @@ function signTex(lines,bg,fg,w=512,h=128){const c=document.createElement('canvas
 
 /* ---------- construção da cena ---------- */
 async function build(){
+  [THREE,{RoomEnvironment},{RoundedBoxGeometry},{mergeGeometries}]=await Promise.all([import('three'),import('three/addons/environments/RoomEnvironment.js'),import('three/addons/geometries/RoundedBoxGeometry.js'),import('three/addons/utils/BufferGeometryUtils.js')]);
   const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
   renderer.setPixelRatio(Math.min(devicePixelRatio,MOBILE?1.5:2));
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.outputColorSpace=THREE.SRGBColorSpace;
@@ -641,7 +651,7 @@ async function mount(){const st=document.getElementById('stage');if(!st)return;
   st2.onpointermove=e=>{const b=st2.getBoundingClientRect();R.ptr.tx=(e.clientX-b.left)/b.width*2-1;R.ptr.ty=(e.clientY-b.top)/b.height*2-1};st2.onpointerleave=()=>{R.ptr.tx=R.ptr.ty=0};
   requestAnimationFrame(()=>st2.classList.add('ready'));if(!running){running=true;last=0;requestAnimationFrame(loop)}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-tod]');if(!b)return;todMode=b.dataset.tod;setTime(todMode==='now'?nowH():+todMode)});
-window.cfMount3D=mount;mount();
+if(!document.documentElement.classList.contains('no3d')){window.cfMount3D=mount;mount()}
 
 </script>
 
@@ -671,11 +681,13 @@ const newSalt=()=>Math.random().toString(36).slice(2,10);
 
 /* Guia detalhado de cada atividade: base das respostas da Dona Formatione. Entra na tarefa (campo "guia") e pode ser editado na aba Tarefas. */
 const GUIAS={"Conferir EPIs da equipe (luvas, botina, óculos, protetor auricular)":{"kw":["epi","capacete","mascara","uniforme","equipamento de protecao"],"g":"Para que serve: EPI é o equipamento que protege o corpo. Sem ele, um acidente pequeno vira machucado grave. Por isso se confere antes de começar o serviço.\nComo fazer:\n1. Faça no começo do turno, antes de alguém ir para o pátio ou o galpão.\n2. Olhe pessoa por pessoa, de perto. Confira o seu também.\n3. Luvas: nas mãos, sem rasgo e sem furo.\n4. Botina: nos pés, fechada, com a sola inteira.\n5. Óculos: nos olhos (não na testa), sem lente quebrada ou muito riscada.\n6. Protetor auricular: no ouvido de quem trabalha perto de máquina ou caminhão.\n7. Faltou ou está estragado? A pessoa troca antes de começar. Sem EPI, não começa o serviço.\nNão marque se: alguém ficou trabalhando sem EPI. Avise o sênior na hora.\nO que escrever na observação: quem estava sem o quê e o que foi feito. Estava tudo certo? Escreva \"Todos com EPI completo\".\nExemplo de observação: \"Ajudante novo sem protetor auricular. Entreguei um novo antes de começar.\""},"Verificar extintores e rota de fuga do pátio":{"kw":["extintor","rota de fuga","saida de emergencia"],"g":"Para que serve: o extintor apaga o começo de um incêndio. A rota de fuga é o caminho para sair rápido numa emergência. Os dois têm de estar prontos antes de alguém precisar.\nComo fazer:\n1. Passe por todos os extintores do pátio, um por um.\n2. Lacre: o pino tem de estar preso pelo lacre inteiro.\n3. Pressão: o ponteiro do reloginho tem de estar na faixa verde. Extintor de CO2 não tem reloginho: nele, confira o lacre e a etiqueta.\n4. Validade: olhe a etiqueta. A data não pode estar vencida.\n5. Veja se o extintor está no lugar dele, com a placa, sem amassado e com a mangueira inteira.\n6. Nada na frente: palete, caçamba ou caixa não podem tampar o extintor.\n7. Ande pela rota de fuga inteira, até a saída. O caminho tem de estar livre e a saída tem de abrir.\n8. Tem coisa leve no caminho? Tire na hora e anote.\nNão marque se: há extintor vencido, sem lacre ou com o ponteiro fora do verde, ou rota de fuga travada que você não conseguiu liberar. Avise o sênior.\nO que escrever na observação: qual extintor, onde fica e qual é o problema. Vai vencer no mês que vem? Anote também.\nExemplo de observação: \"Extintor B2 com lacre rompido. Pedi a troca ao sênior.\""},"Inspeção pré-uso dos caminhões roll-on e poliguindaste":{"kw":["pneu","freio","guindaste","veiculo","roll-on","rollon"],"g":"Para que serve: achar o defeito no pátio, antes de o caminhão ir para a rua com carga. Falha de freio, cabo ou gancho com caçamba pesada causa acidente grave.\nComo fazer:\n1. Faça em cada caminhão que vai sair hoje, antes da primeira viagem, com ele parado e freado.\n2. Pneus: cheios, sem corte, sem bolha, com desenho na borracha e com todas as porcas da roda.\n3. Olhe o chão embaixo do caminhão: não pode ter mancha nova de óleo.\n4. Óleo: confira o nível do óleo do motor e do óleo hidráulico (o que move o braço).\n5. Freios: teste o pedal e o freio de mão antes de sair do lugar.\n6. Cabos de aço e correntes: sem fio partido, sem amassado e sem ferrugem forte.\n7. Ganchos: sem trinca, sem estar abertos e com a trava funcionando.\n8. Braço e mangueiras: sem vazamento. Suba e desça o braço uma vez, sem carga.\n9. Luzes, setas, buzina e alarme de ré funcionando.\nNão marque se: achou problema em freio, pneu, cabo, gancho ou vazamento. Esse caminhão não sai. Avise o sênior.\nO que escrever na observação: o número do caminhão e o que achou, mesmo que pareça pequeno.\nExemplo de observação: \"Roll-on 04: pneu traseiro com desgaste. Avisei o sênior, troca agendada.\""},"Aferir balança rodoviária com peso-padrão":{"kw":["pesagem","peso padrao","calibr"],"g":"Para que serve: conferir se a balança pesa certo. Balança errada faz a empresa cobrar ou pagar errado, e o peso que vai no documento da carga sai errado.\nComo fazer:\n1. Faça antes da primeira pesagem do dia.\n2. Veja se a plataforma está limpa e solta: sem pedra, barro ou material preso embaixo ou nas bordas.\n3. Com a balança vazia, o visor tem de marcar zero.\n4. Coloque o peso-padrão na plataforma. É o peso de teste, que tem o valor conhecido.\n5. Espere o número parar e leia.\n6. Compare com o valor do peso-padrão. A diferença tem de ficar dentro da tolerância que o sênior passou. Não sabe qual é? Pergunte a ele.\n7. Tire o peso e veja se o visor volta para zero.\nNão marque se: a balança não zera ou a diferença passou da tolerância. Não pese cargas e avise o sênior para chamar o técnico.\nO que escrever na observação: sempre os dois números, o do peso-padrão e o que a balança marcou.\nExemplo de observação: \"Peso-padrão 1.000 kg. A balança marcou 1.020 kg. Diferença de 20 kg, sênior avisado.\""},"Emitir e conferir MTRs das coletas do dia":{"kw":["manifesto","sinir","cetesb","cadri"],"g":"Para que serve: o MTR é o documento que acompanha o resíduo no caminhão. Ele diz o que é, de quem é, quem leva e para onde vai. Sem o MTR certo, a carga não pode sair e a empresa pode ser multada.\nComo fazer:\n1. Pegue a lista das coletas programadas para hoje.\n2. Para cada coleta, emita o MTR no sistema (SINIR ou CETESB) antes de o caminhão sair.\n3. Confira o gerador: o cliente de onde o resíduo sai.\n4. Confira o transportador, a placa do caminhão e o motorista.\n5. Confira o destinador: o lugar para onde o resíduo vai.\n6. Confira o tipo de resíduo, a classe e a quantidade. Tem de bater com a carga de verdade.\n7. Faltou documento do cliente (por exemplo, o CADRI, quando for exigido)? Não emita por conta própria. Pergunte ao sênior.\n8. Entregue o MTR ao motorista antes da saída.\n9. No fim, conte: o número de MTRs tem de ser igual ao número de coletas do dia.\nNão marque se: alguma coleta ficou sem MTR ou com dado errado. Essa carga não sai. Sistema fora do ar? Avise o sênior; a carga espera.\nO que escrever na observação: coleta reagendada, MTR corrigido ou sistema fora do ar, com o nome do cliente e a hora.\nExemplo de observação: \"Sistema fora do ar das 8h às 9h. Avisei o sênior. O MTR foi emitido antes de a carga sair.\""},"Conferir segregação na área de triagem":{"kw":["triagem","baia","separacao","separar","mistur","classe ii","classe 2"],"g":"Para que serve: cada resíduo tem o seu lugar. Misturado, o material não pode ser reciclado. E resíduo perigoso no meio do comum contamina tudo e pode causar acidente.\nComo fazer:\n1. Ande por todas as baias da triagem. Baia é o espaço separado para cada material.\n2. Cada baia tem de ter uma placa com o nome do material, fácil de ler.\n3. Olhe dentro: só pode ter o material da placa.\n4. Classe I é o resíduo perigoso: óleo, tinta, solvente, pilha, lâmpada, embalagem suja de produto químico. Fica no lugar próprio dele, nunca junto do resto.\n5. Classe II é o resíduo comum: papel, plástico, metal, vidro, madeira.\n6. Nos coletores coloridos: azul é papel, vermelho é plástico, amarelo é metal, verde é vidro.\n7. Material comum no lugar errado? Leve para a baia certa.\n8. Achou resíduo perigoso no meio do comum? Não mexa sem luva e óculos. Avise o sênior.\nNão marque se: há resíduo perigoso misturado com o comum. Avise o sênior.\nO que escrever na observação: qual baia, o que estava errado e o que você fez.\nExemplo de observação: \"Baia de Classe I sem placa de identificação. Avisei o sênior.\""},"Limpeza e organização do galpão":{"kw":["varrer","varricao","limpar","arrumar","faxina"],"g":"Para que serve: galpão sujo e bagunçado causa tropeço, corte e incêndio. Limpo e arrumado, o próximo turno começa seguro.\nComo fazer:\n1. Faça no fim do turno, com as máquinas desligadas.\n2. Recolha os restos de material do chão e leve cada um para a baia certa.\n3. Varra o chão.\n4. Viu óleo ou outro líquido no chão? Cubra com areia ou manta absorvente, recolha e avise o sênior.\n5. Deixe livres os corredores, as saídas, os extintores e os quadros de energia.\n6. Guarde as ferramentas e os equipamentos no lugar.\n7. Deixe as pilhas e os fardos firmes, sem risco de cair.\n8. Dê uma última volta olhando tudo antes de sair.\nNão marque se: ficou parte sem limpar porque não deu tempo ou faltou gente. Escreva o motivo e avise o sênior.\nO que escrever na observação: o que ficou sem fazer e por quê, ou algo quebrado que você viu.\nExemplo de observação: \"Galpão 2 sem varrição por falta de equipe. Avisei o sênior.\""},"Registrar saldo de caçambas no pátio":{"kw":["contagem","contar","quantas cacambas","estoque"],"g":"Para que serve: saber quantas caçambas vazias a empresa tem para atender os clientes amanhã. Com a contagem errada, falta caçamba na hora da entrega.\nComo fazer:\n1. Faça no fim do turno, depois que os caminhões voltaram.\n2. Ande pelo pátio e conte uma por uma. Não conte de cabeça.\n3. Conte separado por tipo e por tamanho.\n4. Como disponível, conte só as vazias e em bom estado.\n5. Conte à parte as quebradas e as que estão no conserto.\n6. Escreva os números na observação. Nesta tarefa, a observação é o próprio registro.\n7. Vai faltar algum tipo para as entregas de amanhã? Escreva e avise o sênior.\nNão marque se: você não contou no pátio hoje. Não copie o número de ontem.\nO que escrever na observação: quantas disponíveis de cada tipo e quantas em manutenção.\nExemplo de observação: \"12 caçambas disponíveis, 4 em manutenção. Falta caçamba de 5 m³ para amanhã.\""},"Verificar vazamentos na área de armazenamento Classe I":{"kw":["classe i","classe 1","tambor","contencao","perigoso","mitigacao"],"g":"Para que serve: Classe I é o resíduo perigoso (óleo, tinta, solvente, produto químico). Se vazar, faz mal às pessoas, contamina o chão e a água, e a empresa pode ser multada.\nComo fazer:\n1. Antes de entrar na área, coloque luvas, óculos e botina.\n2. Olhe o chão em volta e embaixo dos tambores: não pode ter mancha nem poça.\n3. Bacia de contenção: é a bandeja ou mureta que segura o líquido se um tambor vazar. Tem de estar seca e sem rachadura.\n4. Tem água de chuva na bacia? Avise o sênior. Essa água pode estar contaminada e não vai para o ralo.\n5. Tambores: fechados, em pé, sem amassado fundo, sem ferrugem e sem estufar.\n6. Cada tambor com etiqueta dizendo o que tem dentro.\n7. Kit de mitigação (manta absorvente, areia, pá e saco): completo e fácil de pegar.\n8. Veja se a área está coberta, com placa de aviso e sem nada que não é de lá.\nSe achar vazamento: afaste as pessoas, não pise no líquido e avise o sênior na hora. Só segure o vazamento com o kit se você foi treinado e está de EPI.\nNão marque se: há vazamento sem resolver ou o kit está incompleto. Avise o sênior.\nO que escrever na observação: qual tambor, onde, o que viu e o que foi feito.\nExemplo de observação: \"Bacia de contenção com água de chuva. Avisei o sênior e a água foi retirada.\""},"Conferir lacres e identificação das caçambas antes da saída":{"kw":["lacre da cacamba","adesivo","numero da cacamba","rotulo"],"g":"Para que serve: o lacre mostra que ninguém mexeu na carga no caminho. A identificação mostra qual é a caçamba e o que vai dentro. Com os dois certos, a carga bate com o documento e chega ao destino certo.\nComo fazer:\n1. Faça em cada caçamba carregada, antes de o caminhão sair.\n2. Identificação: o número ou adesivo da caçamba tem de estar no lugar e fácil de ler.\n3. Esse número tem de ser o mesmo do documento da carga (MTR ou ordem de coleta).\n4. Caçamba com resíduo perigoso precisa do rótulo próprio. Na dúvida, pergunte ao sênior.\n5. Lacre: tem de estar colocado, inteiro e bem fechado. Puxe de leve para testar.\n6. Se o número do lacre é anotado no documento, confira se é o mesmo.\n7. Veja se a tampa ou a lona está fechada e presa, e se nada escorre ou cai da caçamba.\nNão marque se: há caçamba sem lacre, com lacre rompido ou sem identificação. Ela não sai até corrigir. Avise o sênior.\nO que escrever na observação: o número da caçamba e o que estava errado.\nExemplo de observação: \"Caçamba 37 sem adesivo de identificação. Avisei o sênior antes da saída.\""}};
+/* Periodicidade: D diária, S semanal (seg–dom), M mensal, A anual. warn = quantos dias antes do fim do período a tarefa fica vermelha. */
+const FREQ={D:{n:'Diária',g:'Diárias',warn:0},S:{n:'Semanal',g:'Semanais',warn:2},M:{n:'Mensal',g:'Mensais',warn:5},A:{n:'Anual',g:'Anuais',warn:30}};
 /* Departamentos: cada tarefa pertence a um; cada usuário tem a lista dos que pode acessar. */
 function migrate(s){
   if(!Array.isArray(s.depts)||!s.depts.length)s.depts=[{id:'d1',name:'Operação',on:true}];
   const d0=s.depts[0].id,ok=id=>s.depts.some(d=>d.id===id),td={};
-  s.tasks.forEach(t=>{if(!ok(t.dept))t.dept=d0;td[t.id]=t.dept;const G=GUIAS[t.title];if(G&&t.guia===undefined){t.guia=G.g;t.kw=G.kw}});
+  s.tasks.forEach(t=>{if(!ok(t.dept))t.dept=d0;td[t.id]=t.dept;if(!FREQ[t.freq])t.freq='D';const G=GUIAS[t.title];if(G&&t.guia===undefined){t.guia=G.g;t.kw=G.kw}});
   s.users.forEach(u=>{u.depts=Array.isArray(u.depts)?u.depts.filter(ok):[d0]});
   s.records.forEach(r=>{if(!r.dept)r.dept=td[r.task]||d0});
   return s}
@@ -689,6 +701,25 @@ const fmtDM=s=>{const [y,m,d]=s.split('-');return d+'/'+m};
 const fmtTime=iso=>{const d=new Date(iso);return pad(d.getHours())+':'+pad(d.getMinutes())};
 const addDays=(s,n)=>{const [y,m,d]=s.split('-').map(Number);return ymd(new Date(y,m-1,d+n))};
 const first=n=>String(n).split(' ')[0];
+/* ---------- Períodos ---------- */
+const fq=t=>FREQ[t?.freq]?t.freq:'D';
+const pday=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
+function perOf(f,day){const d=pday(day),Y=d.getFullYear(),Mo=d.getMonth();let s=d,e=d;
+  if(f==='S'){s=new Date(Y,Mo,d.getDate()-(d.getDay()+6)%7);e=new Date(s.getFullYear(),s.getMonth(),s.getDate()+6)}
+  else if(f==='M'){s=new Date(Y,Mo,1);e=new Date(Y,Mo+1,0)}
+  else if(f==='A'){s=new Date(Y,0,1);e=new Date(Y,11,31)}
+  return {s:ymd(s),e:ymd(e)}}
+const recOf=(t,p)=>S.records.find(r=>r.task===t.id&&r.day>=p.s&&r.day<=p.e);
+const doneRec=(t,day=today())=>recOf(t,perOf(fq(t),day));
+function due(t,day=today()){const f=fq(t),p=perOf(f,day),left=Math.round((pday(p.e)-pday(day))/864e5),w=t.warn??FREQ[f].warn;return {f,p,left,urgent:f!=='D'&&left<=w}}
+const bornDay=t=>ymd(new Date(Math.floor((+t.id||0)/1000)));
+function endedPeriods(f,start,end){const out=[];let p=perOf(f,start);while(p.e<end){out.push(p);p=perOf(f,addDays(p.e,1))}return out}
+const MESES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+function perLabel(d){const {f,p}=d;if(f==='S')return `semana de ${fmtDM(p.s)} a ${fmtDM(p.e)}`;if(f==='M'){const [y,m]=p.s.split('-');return MESES[+m-1]+'/'+y}if(f==='A')return 'ano de '+p.s.slice(0,4);return fmtDay(p.s)}
+const wd=s=>pday(s).toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','');
+const untilTxt=d=>`até ${wd(d.p.e)}, ${fmtDM(d.p.e)}`;
+const leftTxt=n=>n<=0?'vence hoje':n===1?'falta 1 dia':`faltam ${n} dias`;
+const perHint=t=>{const d=due(t);return d.f==='D'?'':` (${FREQ[d.f].n.toLowerCase()}, ${untilTxt(d)}${d.urgent?' — ⏰ **'+leftTxt(d.left)+'**':''})`};
 
 /* ---------- Sessão ---------- */
 let signedProfile = null;
@@ -712,7 +743,7 @@ function sampleWorkspace(){
     users['demo'+n]={id:'demo'+n,name:login,login,email:'equipe@example.test',role:n?'op':'senior',on:true,depts:['d1'],salt,hash:hashPw(salt,'123')};
   }
   ['Conferir o posto de trabalho','Registrar a inspeção do turno','Conferir os equipamentos','Organizar os materiais'].forEach((title,n)=>{
-    tasks['id_'+(n+1)]={id:n+1,title,desc:'Atividade de simulação.',cat:'Rotina de teste',dept:'d1',on:true,crit:false,assign:n?['demo'+n]:[]};
+    tasks['id_'+(n+1)]={id:n+1,title,desc:'Atividade de simulação.',cat:'Rotina de teste',dept:'d1',on:true,crit:false,freq:['D','D','S','M'][n],assign:n?['demo'+n]:[]};
   });
   return {users,tasks,cats:['Rotina de teste'],records:{},depts:{d1:{id:'d1',name:'Operação',on:true}}};
 }
@@ -989,14 +1020,14 @@ function curDept(u){const ds=deptsOf(u),id=deptSel[u.id]??ls.get('cf-dept-'+u.id
 function setDept(u,id){deptSel[u.id]=id;ls.set('cf-dept-'+u.id,id)}
 const canDo=(t,u)=>t.on&&(u.role==='senior'||(u.depts.includes(t.dept)&&(!t.assign.length||t.assign.includes(u.id))));
 const forUser=(t,u)=>t.dept===curDept(u)&&canDo(t,u);
-const pendIn=(u,dep)=>{const day=today();return S.tasks.filter(t=>t.dept===dep&&canDo(t,u)&&!S.records.some(r=>r.task===t.id&&r.day===day)).length};
+const pendIn=(u,dep)=>S.tasks.filter(t=>t.dept===dep&&canDo(t,u)&&!doneRec(t)).length;
 const respLabel=t=>t.assign.length?t.assign.map(userName).map(first).join(', '):'Todos do departamento';
 const opDays=dep=>{const s=new Set(S.records.filter(r=>!dep||r.dept===dep).map(r=>r.day));s.add(today());return s};
 
 async function check(id){
   const u=cur();if(!u)return;
   const t=S.tasks.find(x=>x.id===id);if(!t||!forUser(t,u))return;
-  if(S.records.some(r=>r.task===id&&r.day===today())){toast('Tarefa já registrada hoje');return}
+  if(doneRec(t)){toast(fq(t)==='D'?'Tarefa já registrada hoje':'Tarefa já registrada neste período');return}
   const obs=($('#obs'+id)?.value||'').trim(),at=new Date().toISOString();
   S.records.push({id:nextId(),task:id,dept:t.dept,title:t.title,day:today(),at,uid:u.id,by:u.name,obs});
   if(await save()){const dr=ls.get('cf-drafts',{});delete dr[id];ls.set('cf-drafts',dr)}
@@ -1034,68 +1065,81 @@ function vLogin(){
 
 /* ---------- Checklist ---------- */
 function vChecklist(u){
-  const day=today(),act=S.tasks.filter(t=>forUser(t,u)),recs=S.records.filter(r=>r.day===day);
-  const isDone=t=>recs.some(r=>r.task===t.id);
+  const day=today(),act=S.tasks.filter(t=>forUser(t,u));
+  const R=new Map(act.map(t=>[t.id,doneRec(t,day)])),DU=new Map(act.map(t=>[t.id,due(t,day)]));
+  const isDone=t=>!!R.get(t.id),late=t=>!isDone(t)&&DU.get(t.id).urgent;
   const done=act.filter(isDone).length,pct=act.length?Math.round(done/act.length*100):0;
-  const critOpen=act.filter(t=>t.crit&&!isDone(t)).length;
-  const cats=['Todas','Pendentes',...S.cats.filter(c=>act.some(t=>t.cat===c))];
-  if(!cats.includes(filter))filter='Todas';
-  const list=act.filter(t=>filter==='Todas'||(filter==='Pendentes'?!isDone(t):t.cat===filter));
-  const dr=ls.get('cf-drafts',{});
-  const groups=S.cats.map(c=>[c,list.filter(t=>t.cat===c)]).filter(g=>g[1].length);
+  const critOpen=act.filter(t=>t.crit&&!isDone(t)&&(fq(t)==='D'||late(t))).length,urg=act.filter(late).length;
+  const fs=Object.keys(FREQ).filter(k=>act.some(t=>fq(t)===k));
+  const opts=[['Todas','Todas'],['Pendentes','Pendentes'],...(urg?[['Vencendo','⏰ Vencendo ('+urg+')']]:[]),...(fs.length>1?fs.map(k=>['p:'+k,FREQ[k].g]):[]),...S.cats.filter(c=>act.some(t=>t.cat===c)).map(c=>[c,c])];
+  if(!opts.some(o=>o[0]===filter))filter='Todas';
+  const list=act.filter(t=>filter==='Todas'||(filter==='Pendentes'?!isDone(t):filter==='Vencendo'?late(t):filter.startsWith('p:')?fq(t)===filter.slice(2):t.cat===filter));
+  const dr=ls.get('cf-drafts',{}),rank=t=>isDone(t)?2:late(t)?0:1;
+  const card=t=>{const r=R.get(t.id),d=DU.get(t.id),lt=late(t),per=d.f!=='D';
+   return `<article class="card${r?' done':lt?' late':''}"><button type="button" class="tick" data-check="${t.id}" aria-label="${r?'Concluída':'Marcar como feita'}: ${esc(t.title)}" ${r?'aria-disabled="true"':''}>${r?'<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}</button>
+   <h3>${esc(t.title)}${t.crit?'<span class="tag">Crítica</span>':''}${per?`<span class="tag pt">${FREQ[d.f].n} · ${r?esc(perLabel(d)):untilTxt(d)}</span>`:''}${lt?`<span class="tag red">⏰ ${leftTxt(d.left).replace(/^./,c=>c.toUpperCase())}</span>`:''}</h3>
+   ${t.desc?`<p class="d">${esc(t.desc)}</p>`:''}
+   ${u.role==='senior'?`<p class="resp">Responsável: ${esc(respLabel(t))}</p>`:''}
+   ${r?`<p class="sig">✔ <b>${esc(r.by)}</b> · <b>${fmtDay(r.day)} às ${fmtTime(r.at)}</b>${per?` <span style="color:var(--mute)">· próximo preenchimento a partir de ${fmtDM(addDays(d.p.e,1))}</span>`:''}${r.obs?`<q>${esc(r.obs)}</q>`:''}${u.role==='senior'?` <button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button>`:''}</p>`
+      :`<div class="obs"><label for="obs${t.id}" style="font-weight:500">Observação (opcional)</label><textarea id="obs${t.id}" rows="1" maxlength="500" data-draft="${t.id}" placeholder="Ex.: extintor B2 com lacre rompido">${esc(dr[t.id]||'')}</textarea></div>`}
+   </article>`};
+  const secs=Object.keys(FREQ).map(k=>[k,list.filter(t=>fq(t)===k)]).filter(x=>x[1].length);
+  const body=secs.map(([k,ts])=>{const d=due({freq:k},day),lt=ts.some(late);
+    return `<h2 class="per${lt?' late':''}">${FREQ[k].g}<small>${k==='D'?fmtDay(day):`${perLabel(d)} · preencher ${untilTxt(d)}`}${lt?' · ⏰ '+leftTxt(d.left):''}</small></h2>`+
+     S.cats.map(c=>[c,ts.filter(t=>t.cat===c).sort((a,b)=>rank(a)-rank(b))]).filter(g=>g[1].length).map(([c,g])=>`<h3 class="cat">${esc(c)}</h3>`+g.map(card).join('')).join('')}).join('');
   return `${local?'<div class="banner">Modo local: os registros ficam só neste navegador.</div>':''}
   <section class="meter" aria-label="Progresso do dia"><div class="big">${done}<span>/${act.length}</span></div>
    <div><h2 style="font-size:20px">${u.role==='senior'?'Checklist':'Suas tarefas'} · ${esc(deptName(curDept(u)))}</h2><div class="track" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
-   <p>${fmtDay(day)} · ${pct}% concluído${critOpen?` · <b style="color:var(--crit)">${critOpen} crítica${critOpen>1?'s':''} pendente${critOpen>1?'s':''}</b>`:act.length?' · nenhuma crítica pendente':''}</p></div></section>
-  <div class="filters">${cats.map(c=>`<button type="button" data-f="${esc(c)}" aria-pressed="${c===filter}">${esc(c)}</button>`).join('')}</div>
-  ${!act.length?`<div class="empty">Nenhuma tarefa ${u.role==='senior'?'ativa':'para você'} em ${esc(deptName(curDept(u)))} hoje.</div>`:!groups.length?'<div class="empty">Tudo feito por aqui. Bom trabalho!</div>':''}
-  ${groups.map(([c,ts])=>`<h2 class="cat">${esc(c)}</h2>`+ts.map(t=>{const r=recs.find(x=>x.task===t.id);
-   return `<article class="card${r?' done':''}"><button type="button" class="tick" data-check="${t.id}" aria-label="${r?'Concluída':'Marcar como feita'}: ${esc(t.title)}" ${r?'aria-disabled="true"':''}>${r?'<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}</button>
-   <h3>${esc(t.title)}${t.crit?'<span class="tag">Crítica</span>':''}</h3>
-   ${t.desc?`<p class="d">${esc(t.desc)}</p>`:''}
-   ${u.role==='senior'?`<p class="resp">Responsável: ${esc(respLabel(t))}</p>`:''}
-   ${r?`<p class="sig">✔ <b>${esc(r.by)}</b> · <b>${fmtDay(r.day)} às ${fmtTime(r.at)}</b>${r.obs?`<q>${esc(r.obs)}</q>`:''}${u.role==='senior'?` <button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button>`:''}</p>`
-      :`<div class="obs"><label for="obs${t.id}" style="font-weight:500">Observação (opcional)</label><textarea id="obs${t.id}" rows="1" maxlength="500" data-draft="${t.id}" placeholder="Ex.: extintor B2 com lacre rompido">${esc(dr[t.id]||'')}</textarea></div>`}
-   </article>`}).join('')).join('')}`;
+   <p>${fmtDay(day)} · ${pct}% concluído${critOpen?` · <b style="color:var(--crit)">${critOpen} crítica${critOpen>1?'s':''} pendente${critOpen>1?'s':''}</b>`:act.length?' · nenhuma crítica pendente':''}${urg?` · <b style="color:var(--danger)">⏰ ${urg} vencendo</b>`:''}</p></div></section>
+  <div class="filters">${opts.map(([v,l])=>`<button type="button" data-f="${esc(v)}" aria-pressed="${v===filter}">${esc(l)}</button>`).join('')}</div>
+  ${!act.length?`<div class="empty">Nenhuma tarefa ${u.role==='senior'?'ativa':'para você'} em ${esc(deptName(curDept(u)))} hoje.</div>`:!secs.length?'<div class="empty">Tudo feito por aqui. Bom trabalho!</div>':''}
+  ${body}`;
 }
 
 /* ---------- Painel do sênior ---------- */
 function vDash(){
   const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1)),od=opDays(dep);
   const days=[];for(let d=start;d<=end;d=addDays(d,1))if(od.has(d))days.push(d);
-  const act=S.tasks.filter(t=>t.on&&t.dept===dep),ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep));
+  const all=S.tasks.filter(t=>t.on&&t.dept===dep),act=all.filter(t=>fq(t)==='D'),per=all.filter(t=>fq(t)!=='D');
+  const ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep));
   const recIn=S.records.filter(r=>r.dept===dep&&r.day>=start&&r.day<=end);
   const done=(t,d)=>S.records.some(r=>r.task===t.id&&r.day===d);
   const series=days.map(d=>{const n=act.filter(t=>done(t,d)).length;return {d,n,pct:act.length?Math.round(n/act.length*100):0}});
   const past=series.filter(s=>s.d!==end),avg=past.length?Math.round(past.reduce((a,s)=>a+s.pct,0)/past.length):0;
   const tday=series.find(s=>s.d===end)||{n:0,pct:0};
-  const critPend=act.filter(t=>t.crit&&!done(t,end));
-  const critMiss=past.reduce((a,s)=>a+act.filter(t=>t.crit&&!done(t,s.d)).length,0);
+  const perMiss=t=>{const ps=endedPeriods(fq(t),start,end).filter(p=>p.e>=bornDay(t));return {of:ps.length,m:ps.filter(p=>!recOf(t,p)).length}};
+  const critPend=[...act.filter(t=>t.crit&&!done(t,end)),...per.filter(t=>t.crit&&!doneRec(t,end)&&due(t,end).urgent)];
+  const critMiss=past.reduce((a,s)=>a+act.filter(t=>t.crit&&!done(t,s.d)).length,0)+per.filter(t=>t.crit).reduce((a,t)=>a+perMiss(t).m,0);
   const obsN=recIn.filter(r=>r.obs).length;
   const byOp=ops.map(u=>{const mine=act.filter(t=>t.assign.includes(u.id));const exp=mine.length*past.length;const ok=past.reduce((a,s)=>a+mine.filter(t=>done(t,s.d)).length,0);
-    const nChecks=recIn.filter(r=>r.uid===u.id).length;const tdMine=mine.filter(t=>!done(t,end)).length;
+    const nChecks=recIn.filter(r=>r.uid===u.id).length;const tdMine=all.filter(t=>t.assign.includes(u.id)&&!doneRec(t,end)&&(fq(t)==='D'||due(t,end).urgent)).length;
     return {u,nChecks,pct:exp?Math.round(ok/exp*100):null,pendHoje:tdMine,last:recIn.filter(r=>r.uid===u.id).sort((a,b)=>a.at<b.at?1:-1)[0]}});
   const maxChecks=Math.max(1,...byOp.map(o=>o.nChecks));
-  const miss=act.map(t=>({t,m:past.filter(s=>!done(t,s.d)).length})).filter(x=>x.m).sort((a,b)=>b.m-a.m).slice(0,5);
+  const miss=[...act.map(t=>({t,m:past.filter(s=>!done(t,s.d)).length,of:past.length,un:'dias'})),...per.map(t=>({t,...perMiss(t),un:'períodos'}))].filter(x=>x.m).sort((a,b)=>b.m-a.m).slice(0,5);
   const obs=recIn.filter(r=>r.obs).sort((a,b)=>a.at<b.at?1:-1).slice(0,6);
+  const perRows=per.map(t=>({t,r:doneRec(t,end),d:due(t,end)})).sort((a,b)=>(!!a.r-!!b.r)||(a.d.left-b.d.left));
   return `<div class="head"><h2>Painel · ${esc(deptName(dep))}</h2><div class="filters" style="margin:0">${[7,14,30].map(p=>`<button type="button" data-period="${p}" aria-pressed="${p===period}">${p} dias</button>`).join('')}</div></div>
   <div class="kpis">
-   <div class="kpi"><small>Hoje</small><b>${tday.n}/${act.length}</b><span>${tday.pct}% concluído</span></div>
+   <div class="kpi"><small>Hoje · tarefas diárias</small><b>${tday.n}/${act.length}</b><span>${tday.pct}% concluído</span></div>
    <div class="kpi${critPend.length?' warn':''}"><small>Críticas pendentes hoje</small><b>${critPend.length}</b><span>${critPend.length?esc(critPend.slice(0,2).map(t=>t.title.split(' ').slice(0,3).join(' ')).join('; '))+(critPend.length>2?'…':''):'tudo em dia'}</span></div>
    <div class="kpi"><small>Conformidade média</small><b>${avg}%</b><span>${past.length} dias operados antes de hoje</span></div>
    <div class="kpi${critMiss?' warn':''}"><small>Críticas não feitas</small><b>${critMiss}</b><span>${obsN} observações no período</span></div>
   </div>
   <div class="dgrid">
    <section class="panel"><h3>Conclusão diária do checklist</h3>
-    <div class="cols" role="img" aria-label="Percentual de tarefas concluídas por dia">${series.map(s=>`<div class="col${s.pct<80?' low':''}" tabindex="0"><em>${s.pct}%</em><i style="height:${Math.max(s.pct,1)}%"></i><span class="tip">${fmtDay(s.d)}${s.d===end?' (hoje)':''}: ${s.n} de ${act.length} · ${s.pct}%</span></div>`).join('')}</div>
+    <div class="cols" role="img" aria-label="Percentual de tarefas diárias concluídas por dia">${series.map(s=>`<div class="col${s.pct<80?' low':''}" tabindex="0"><em>${s.pct}%</em><i style="height:${Math.max(s.pct,1)}%"></i><span class="tip">${fmtDay(s.d)}${s.d===end?' (hoje)':''}: ${s.n} de ${act.length} · ${s.pct}%</span></div>`).join('')}</div>
     <div class="xl">${series.map(s=>`<span>${s.d===end?'Hoje':fmtDM(s.d)}</span>`).join('')}</div>
-    <p class="note">Barras em âmbar: dias abaixo de 80% de conclusão. Dias sem nenhum registro neste departamento não aparecem.</p></section>
+    <p class="note">Só tarefas diárias. Barras em âmbar: dias abaixo de 80% de conclusão. Dias sem nenhum registro neste departamento não aparecem.</p></section>
+   <section class="panel"><h3>Tarefas semanais, mensais e anuais</h3>
+    ${perRows.length?perRows.map(({t,r,d})=>`<div class="trow"><div><b>${esc(t.title)}</b> <span class="tag pt">${FREQ[d.f].n}</span>${t.crit?' <span class="tag">Crítica</span>':''}${!r&&d.urgent?` <span class="tag red">⏰ ${leftTxt(d.left)}</span>`:''}
+     <div class="resp">${esc(perLabel(d))} · ${r?`✔ ${esc(r.by)} em ${fmtDM(r.day)} ${fmtTime(r.at)}`:`pendente, ${untilTxt(d)}`} · ${esc(respLabel(t))}</div></div></div>`).join(''):'<p class="note">Nenhuma tarefa semanal, mensal ou anual neste departamento.</p>'}
+   </section>
    <section class="panel"><h3>Desempenho por operador</h3>
     ${byOp.map(o=>`<div class="hbar${o.pct!=null&&o.pct<85?' warn':''}" title="${esc(o.u.name)}: ${o.nChecks} checks no período"><span class="n">${esc(o.u.name)}</span><span class="tr"><i style="width:${o.nChecks/maxChecks*100}%"></i></span><b>${o.nChecks} checks</b></div>
-     <p class="note" style="margin:-2px 0 8px">${o.pct!=null?`Conformidade nas tarefas atribuídas: <b>${o.pct}%</b>`:'Sem tarefas exclusivas'} · ${o.pendHoje?`<span style="color:var(--crit)">${o.pendHoje} pendente${o.pendHoje>1?'s':''} hoje</span>`:'em dia hoje'}${o.last?` · último check ${fmtDM(o.last.day)} ${fmtTime(o.last.at)}`:''}</p>`).join('')||'<p class="note">Nenhum operador ativo neste departamento.</p>'}
+     <p class="note" style="margin:-2px 0 8px">${o.pct!=null?`Conformidade nas tarefas diárias atribuídas: <b>${o.pct}%</b>`:'Sem tarefas diárias exclusivas'} · ${o.pendHoje?`<span style="color:var(--crit)">${o.pendHoje} pendente${o.pendHoje>1?'s':''} hoje</span>`:'em dia hoje'}${o.last?` · último check ${fmtDM(o.last.day)} ${fmtTime(o.last.at)}`:''}</p>`).join('')||'<p class="note">Nenhum operador ativo neste departamento.</p>'}
    </section>
    <section class="panel"><h3>Tarefas que mais ficaram sem fazer</h3>
-    ${miss.length?miss.map(x=>`<div class="hbar${x.t.crit?' warn':''}"><span class="n" title="${esc(x.t.title)}">${esc(x.t.title)}</span><span class="tr"><i style="width:${x.m/Math.max(1,past.length)*100}%"></i></span><b>${x.m} de ${past.length} dias</b></div>`).join('')+'<p class="note">Em âmbar: tarefas críticas.</p>':'<p class="note">Nenhuma falha no período.</p>'}
+    ${miss.length?miss.map(x=>`<div class="hbar${x.t.crit?' warn':''}"><span class="n" title="${esc(x.t.title)}">${esc(x.t.title)}</span><span class="tr"><i style="width:${x.m/Math.max(1,x.of)*100}%"></i></span><b>${x.m} de ${x.of} ${x.un}</b></div>`).join('')+'<p class="note">Em âmbar: tarefas críticas. Semanais, mensais e anuais contam só os períodos já encerrados.</p>':'<p class="note">Nenhuma falha no período.</p>'}
    </section>
    <section class="panel"><h3>Observações recentes</h3>
     ${obs.length?`<ul class="olist">${obs.map(r=>`<li><b>${esc(r.title)}</b><q>${esc(r.obs)}</q><small>${esc(r.by)} · ${fmtDay(r.day)} ${fmtTime(r.at)}</small></li>`).join('')}</ul>`:'<p class="note">Sem observações no período.</p>'}
@@ -1115,10 +1159,12 @@ function vTarefas(){
    <div class="grid"><div><label for="tDept">Departamento</label><select id="tDept">${S.depts.filter(d=>d.on||d.id===fd).map(d=>`<option value="${d.id}" ${d.id===fd?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
     <div><label for="tCat">Categoria</label><select id="tCat">${S.cats.map(c=>`<option ${e?.cat===c?'selected':''}>${esc(c)}</option>`).join('')}<option value="__new">+ Nova categoria…</option></select></div>
     <div id="newCatBox" hidden><label for="tNewCat">Nome da categoria</label><input id="tNewCat" maxlength="40"></div>
-    <div><label for="tCrit">Criticidade</label><select id="tCrit"><option value="0">Normal</option><option value="1" ${e?.crit?'selected':''}>Crítica</option></select></div></div>
+    <div><label for="tCrit">Criticidade</label><select id="tCrit"><option value="0">Normal</option><option value="1" ${e?.crit?'selected':''}>Crítica</option></select></div>
+    <div><label for="tFreq">Periodicidade</label><select id="tFreq">${Object.entries(FREQ).map(([k,v])=>`<option value="${k}" ${fq(e)===k?'selected':''}>${v.n}</option>`).join('')}</select></div>
+    <div id="warnBox" ${fq(e)==='D'?'hidden':''}><label for="tWarn">Ficar vermelha faltando (dias)</label><input id="tWarn" type="number" inputmode="numeric" min="0" max="366" value="${e?.warn??FREQ[fq(e)].warn}"></div></div>
    <div class="f" style="margin-top:14px"><label>Quem executa</label><div class="checks" id="asgBox">${asgHtml(fd,asg)}</div></div>
    <div class="row-end">${e?'<button class="btn ghost" type="button" data-act="cancelTask">Cancelar</button>':''}<button class="btn">${e?'Salvar alterações':'Adicionar tarefa'}</button></div></form>
-  <section class="panel">${S.cats.map(c=>{const ts=all.filter(t=>t.cat===c);return ts.length?`<h2 class="cat" style="margin-top:6px">${esc(c)}</h2>`+ts.map(t=>`<div class="trow${t.on?'':' off'}"><div><b>${esc(t.title)}</b>${t.crit?' <span class="tag">Crítica</span>':''}${t.on?'':' <span class="note">(inativa)</span>'}<div class="resp">Executa: ${esc(respLabel(t))}${t.guia?'':' · <span style="color:var(--crit)">sem guia para a Dona</span>'}</div></div>
+  <section class="panel">${S.cats.map(c=>{const ts=all.filter(t=>t.cat===c);return ts.length?`<h2 class="cat" style="margin-top:6px">${esc(c)}</h2>`+ts.map(t=>`<div class="trow${t.on?'':' off'}"><div><b>${esc(t.title)}</b>${t.crit?' <span class="tag">Crítica</span>':''}${t.on?'':' <span class="note">(inativa)</span>'}<div class="resp">${FREQ[fq(t)].n}${fq(t)!=='D'?' · vermelha faltando '+(t.warn??FREQ[fq(t)].warn)+' dia(s)':''} · Executa: ${esc(respLabel(t))}${t.guia?'':' · <span style="color:var(--crit)">sem guia para a Dona</span>'}</div></div>
    <div class="acts"><button class="btn ghost sm" type="button" data-edit="${t.id}">Editar</button><button class="btn ghost sm" type="button" data-tog="${t.id}">${t.on?'Desativar':'Ativar'}</button><button class="btn danger sm" type="button" data-del="${t.id}">Excluir</button></div></div>`).join(''):''}).join('')||'<p class="note">Nenhuma tarefa neste departamento ainda. Use o formulário acima para criar a primeira.</p>'}</section>`;
 }
 function asgHtml(dep,asg){const ops=S.users.filter(u=>u.role==='op'&&u.depts.includes(dep)),a=asg.filter(id=>ops.some(o=>o.id===id));
@@ -1228,19 +1274,19 @@ const hasVoice=()=>!!(ttsNs||window.speechSynthesis);
 
 /* --- dados para a Dona (recortados pelo nível de acesso) --- */
 function donaStats(period=14){const dep=curDept(cur()),end=today(),start=addDays(end,-(period-1)),od=opDays(dep),days=[];for(let d=start;d<=end;d=addDays(d,1))if(od.has(d))days.push(d);
-  const act=S.tasks.filter(t=>t.on&&t.dept===dep),ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep)),done=(t,d)=>S.records.some(r=>r.task===t.id&&r.day===d);
+  const all=S.tasks.filter(t=>t.on&&t.dept===dep),act=all.filter(t=>fq(t)==='D'),ops=S.users.filter(u=>u.role==='op'&&u.on&&u.depts.includes(dep)),done=(t,d)=>S.records.some(r=>r.task===t.id&&r.day===d);
   const past=days.filter(d=>d!==end),pct=d=>act.length?Math.round(act.filter(t=>done(t,d)).length/act.length*100):0;
   const avg=past.length?Math.round(past.reduce((a,d)=>a+pct(d),0)/past.length):0,worst=past.slice().sort((a,b)=>pct(a)-pct(b))[0];
   const miss=act.map(t=>({t,m:past.filter(d=>!done(t,d)).length})).filter(x=>x.m).sort((a,b)=>b.m-a.m);
   const critMiss=past.reduce((a,d)=>a+act.filter(t=>t.crit&&!done(t,d)).length,0);
   const byOp=ops.map(u=>{const mine=act.filter(t=>t.assign.includes(u.id)),exp=mine.length*past.length,ok=past.reduce((a,d)=>a+mine.filter(t=>done(t,d)).length,0);
-    return {u,pct:exp?Math.round(ok/exp*100):null,checks:S.records.filter(r=>r.dept===dep&&r.uid===u.id&&r.day>=start).length,pend:mine.filter(t=>!done(t,end))}});
-  const todayDone=act.filter(t=>done(t,end)),todayPend=act.filter(t=>!done(t,end));
+    return {u,pct:exp?Math.round(ok/exp*100):null,checks:S.records.filter(r=>r.dept===dep&&r.uid===u.id&&r.day>=start).length,pend:all.filter(t=>t.assign.includes(u.id)&&!doneRec(t,end))}});
+  const todayDone=all.filter(t=>doneRec(t,end)),todayPend=all.filter(t=>!doneRec(t,end));
   const obs=S.records.filter(r=>r.dept===dep&&r.obs&&r.day>=start).sort((a,b)=>a.at<b.at?1:-1);
-  return {start,end,days:past.length,avg,worst,worstPct:worst?pct(worst):null,miss,critMiss,byOp,todayDone,todayPend,obs,act}}
+  return {start,end,days:past.length,avg,worst,worstPct:worst?pct(worst):null,miss,critMiss,byOp,todayDone,todayPend,obs,act:all}}
 function donaContext(u){const now=new Date(),day=today(),recs=S.records.filter(r=>r.day===day);
-  const taskInfo=t=>{const r=recs.find(x=>x.task===t.id);return {tarefa:t.title,categoria:t.cat,critica:t.crit,instrucao:t.desc||undefined,guia:t.guia||undefined,
-    responsavel:u.role==='senior'?respLabel(t):undefined,status:r?`feita por ${r.by} às ${fmtTime(r.at)}`:'pendente',observacao:r?.obs||undefined}};
+  const taskInfo=t=>{const r=doneRec(t,day),d=due(t,day);return {tarefa:t.title,periodicidade:FREQ[d.f].n,...(d.f!=='D'?{periodo_atual:perLabel(d),prazo:fmtDay(d.p.e),dias_para_o_prazo:d.left,vermelha_por_prazo_proximo:!r&&d.urgent}:{}),categoria:t.cat,critica:t.crit,instrucao:t.desc||undefined,guia:t.guia||undefined,
+    responsavel:u.role==='senior'?respLabel(t):undefined,status:r?`feita por ${r.by} em ${fmtDay(r.day)} às ${fmtTime(r.at)}`:'pendente',observacao:r?.obs||undefined}};
   const dep=curDept(u),base={hoje:fmtDay(day),agora:fmtTime(now.toISOString()),usuario:u.name,perfil:u.role==='senior'?'Sênior':'Operador',departamento_selecionado_agora:deptName(dep),departamentos_que_o_usuario_acessa:deptsOf(u).map(d=>({nome:d.name,pendentes_hoje:pendIn(u,d.id)}))};
   if(u.role!=='senior')return {...base,minhas_tarefas_hoje:S.tasks.filter(t=>forUser(t,u)).map(taskInfo)};
   const st=donaStats(14);
@@ -1256,12 +1302,13 @@ function donaContext(u){const now=new Date(),day=today(),recs=S.records.filter(r
 const DONA_MANUAL=`COMO O CHECKFORMATION FUNCIONA (descreva a tela com estes nomes)
 - Login: campos "Usuário" e "Senha", botão verde "Entrar". O usuário não diferencia maiúsculas/minúsculas. O botão "Mostrar" deixa ver a senha digitada. Cada pessoa é cadastrada pelo sênior; o nome cadastrado entra sozinho em cada registro.
 - No alto da tela aparece "Bom dia/Boa tarde/Boa noite" com o nome. Botões no canto: tema claro/escuro (☾/☀) e "Sair".
-- OPERADOR vê só a tela "Minhas tarefas". No topo, um número grande (ex.: 3/5 = fez 3 de 5) e uma barra verde de progresso. Abaixo, botões de filtro: "Todas", "Pendentes" e o nome de cada categoria. Cada tarefa é um cartão com o nome, às vezes uma etiqueta laranja "Crítica", a instrução em cinza, a caixa "Observação (opcional)" e, à esquerda, um quadrado branco. Para registrar: faz o serviço, escreve a observação se houver problema e toca no quadrado; ele fica verde com ✓ e aparece "✔ Nome · data às hora"; o cartão fica verde-claro. Cada tarefa vale uma vez por dia; tarefas para "todos" ficam feitas pelo primeiro que registrar. O operador não desfaz: pede ao sênior para "estornar".
-- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil Operador/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, botões "Copiar dia (CSV)" e "Copiar tudo" para colar no Excel, e "Estornar").
+- OPERADOR vê só a tela "Minhas tarefas". No topo, um número grande (ex.: 3/5 = fez 3 de 5) e uma barra verde de progresso. Abaixo, botões de filtro: "Todas", "Pendentes" e o nome de cada categoria. Cada tarefa é um cartão com o nome, às vezes uma etiqueta laranja "Crítica", a instrução em cinza, a caixa "Observação (opcional)" e, à esquerda, um quadrado branco. Para registrar: faz o serviço, escreve a observação se houver problema e toca no quadrado; ele fica verde com ✓ e aparece "✔ Nome · data às hora"; o cartão fica verde-claro. Tarefa diária vale uma vez por dia; semanal, uma vez por semana; mensal, uma vez por mês; anual, uma vez por ano; tarefas para "todos" ficam feitas pelo primeiro que registrar. O operador não desfaz: pede ao sênior para "estornar".
+- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, Periodicidade (Diária/Semanal/Mensal/Anual) e "Ficar vermelha faltando (dias)", "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil Operador/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, botões "Copiar dia (CSV)" e "Copiar tudo" para colar no Excel, e "Estornar").
 - DEPARTAMENTOS: cada departamento tem o seu próprio checklist (tarefas diferentes). O sênior cria departamentos na aba "Departamentos" (Novo departamento, Renomear, Desativar/Ativar, Excluir — só exclui se não tiver tarefas nem histórico). Cada tarefa pertence a um departamento (campo "Departamento" na aba Tarefas). No cadastro de cada pessoa, na aba "Equipe", o sênior marca as caixinhas "Departamentos que pode acessar"; o sênior acessa todos. Quem tem mais de um departamento vê, no alto da tela, a faixa "Departamento:" com um botão para cada um; o botão claro é o departamento em que está preenchendo agora, e o número ao lado do nome é quantas tarefas faltam hoje ali. Tocar em outro botão troca de departamento. Painel, Checklist, Tarefas e Histórico do sênior mostram só o departamento selecionado; os dados abaixo também são só dele.
 - Estorno apaga o registro do dia; a tarefa volta a pendente. Use só para engano e anote o motivo (não há log de estornos ainda).
 - A Dona Formatione fica no botão redondo verde no canto de baixo. Tem perguntas prontas, campo para escrever, botão 🔊 Ouvir (lê a resposta em voz alta), 🎤 microfone (quando disponível), "Não entendi" e A+ (letra maior).
-- Limitações: sem horário-limite por tarefa, sem foto, sem turnos, sem tarefas semanais/mensais, sem log de edições; o login organiza o uso mas não é segurança forte.`;
+- PERIODICIDADE: cada tarefa é Diária, Semanal (segunda a domingo), Mensal ou Anual. Na tela, as tarefas ficam separadas em blocos "Diárias", "Semanais", "Mensais" e "Anuais", cada bloco com o período e o prazo (ex.: "semana de 23/11 a 29/11 · preencher até dom, 29/11"). A semanal/mensal/anual aparece todo dia até alguém registrar no período; depois fica verde até começar o próximo período. Quando faltam poucos dias para o prazo (padrão: 2 na semanal, 5 na mensal, 30 na anual; o sênior ajusta em "Ficar vermelha faltando"), o cartão fica VERMELHO com o aviso "Faltam X dias" ou "Vence hoje", e aparece o filtro "⏰ Vencendo".
+- Limitações: sem horário-limite por tarefa, sem foto, sem turnos, sem log de edições.`;
 const DONA_DOMAIN=`CONTEXTO OPERACIONAL (gestão de resíduos e reciclagem) — explique termos assim:
 - EPI = Equipamento de Proteção Individual (luvas, botina, óculos, protetor auricular): protege o corpo.
 - Extintor: lacre inteiro, ponteiro na faixa verde, validade, acesso livre. Rota de fuga = caminho de saída em emergência, sempre livre.
@@ -1335,11 +1382,11 @@ function findTask(u,q){const qw=new Set(wordsOf(q)),dep=curDept(u);let best=null
     for(const w of new Set(wordsOf(t.title)))if(qw.has(w))sc+=2;for(const w of new Set(wordsOf(t.desc)))if(qw.has(w))sc+=1;for(const k of t.kw||[])if(q.includes(k))sc+=2;
     if(sc&&t.dept===dep)sc+=.5;if(sc>bs){best=t;bs=sc}}
   return best}
-function taskGuide(u,t){const sr=u.role==='senior',r=S.records.find(x=>x.task===t.id&&x.day===today()),other=t.dept!==curDept(u);
+function taskGuide(u,t){const sr=u.role==='senior',r=doneRec(t),dd=due(t),other=t.dept!==curDept(u);
   const body=t.guia?t.guia.replace(/^([A-ZÀ-Ú][^:\n]{2,44}):/gm,'**$1:**'):`**Instrução cadastrada:** ${t.desc}\n\n${sr?'Esta tarefa ainda **não tem guia**. Para eu explicar melhor à equipe, abra a aba **Tarefas** → **Editar** → preencha **Guia para a Dona Formatione**.':'Para saber os detalhes desta tarefa, pergunte ao **sênior**.'}`;
-  return `**${t.title}**${t.crit?' — ⚠️ tarefa **crítica**':''}${sr?`\nExecuta: ${respLabel(t)} · Departamento: ${deptName(t.dept)}`:other?`\nEsta tarefa é do departamento **${deptName(t.dept)}**. Troque de departamento no alto da tela para marcar.`:''}\n\n${body}\n\n${r?`✅ Hoje ela já foi feita por **${r.by}**, às ${fmtTime(r.at)}.`:sr?'Hoje ela ainda está **pendente**.':'👉 Fez tudo e está certo? Toque no **quadrado branco** da tarefa. Não deu para fazer? **Não marque** e avise o sênior.'}${sr?'':FIM}`}
+  return `**${t.title}**${t.crit?' — ⚠️ tarefa **crítica**':''}${dd.f!=='D'?`\n🗓 ${FREQ[dd.f].n}: ${perLabel(dd)}, preencher ${untilTxt(dd)}${!r&&dd.urgent?' — ⏰ **'+leftTxt(dd.left)+'**':''}`:''}${sr?`\nExecuta: ${respLabel(t)} · Departamento: ${deptName(t.dept)}`:other?`\nEsta tarefa é do departamento **${deptName(t.dept)}**. Troque de departamento no alto da tela para marcar.`:''}\n\n${body}\n\n${r?`✅ ${dd.f==='D'?'Hoje':'Neste período'} ela já foi feita por **${r.by}**, em ${fmtDM(r.day)} às ${fmtTime(r.at)}.`:sr?`${dd.f==='D'?'Hoje':'Neste período'} ela ainda está **pendente**.`:'👉 Fez tudo e está certo? Toque no **quadrado branco** da tarefa. Não deu para fazer? **Não marque** e avise o sênior.'}${sr?'':FIM}`}
 function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''),sr=u.role==='senior',fn=first(u.name),day=today(),recs=S.records.filter(r=>r.day===day);
-  const mine=S.tasks.filter(t=>forUser(t,u)),pend=mine.filter(t=>!recs.some(r=>r.task===t.id)).sort((a,b)=>b.crit-a.crit);
+  const mine=S.tasks.filter(t=>forUser(t,u)),pend=mine.filter(t=>!doneRec(t)).sort((a,b)=>(due(b).urgent-due(a).urgent)||(b.crit-a.crit));
   if(depth===0&&has(q,'nao entendi','mais facil','explica de novo','outro jeito','como assim','nao entendo','nao sei')){
     const prev=[...dona.msgs].reverse().filter(m=>m.r==='u').map(m=>m.t).find(t=>!/n[aã]o entend|mais f[aá]cil|de novo|outro jeito|como assim|n[aã]o sei/i.test(t));
     if(!prev)return `Tudo bem, ${fn}! Me diga **com as suas palavras** o que você quer saber. Por exemplo: "como marco a tarefa?" ou "o que é MTR?".\n\nVocê também pode tocar em uma das **perguntas prontas** aqui embaixo.`;
@@ -1352,6 +1399,8 @@ function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').repla
     :`${fn}, **a sua segurança vem em primeiro lugar.** ⚠️ Faça nesta ordem:\n1. **Afaste-se** do lugar e tire as outras pessoas de perto.\n2. **Avise agora** o sênior ou a brigada de emergência. Grite ou ligue, não espere.\n3. **Não mexa** no material se você não foi treinado ou se está sem EPI (luva, óculos, botina).\n4. Se for fogo e você foi treinado, use o extintor. Se não foi treinado, só afaste as pessoas.\n5. **Depois** que tudo estiver seguro, escreva na observação da tarefa: o que aconteceu, onde e a hora.\n\nNão se preocupe com o sistema agora. **Primeiro as pessoas.**`;
   if(/\b(oi|ola|bom dia|boa tarde|boa noite|tudo bem|e ai)\b/.test(q)&&q.length<30)return donaWelcome(u);
   if(has(q,'proxima tarefa','por onde comec','qual faco primeiro','qual eu faco primeiro'))return pend.length?`${fn}, a próxima é esta:\n\n`+taskGuide(u,pend[0]):`Parabéns, ${fn}! ✅ Não tem tarefa pendente para ${sr?'este departamento':'você'} agora.`;
+  if(has(q,'semanal','mensal','anual','periodic','vermelh','prazo','vence','vencendo')){const ps=mine.filter(t=>fq(t)!=='D');
+    return `**Tarefas por período**, ${fn}:\n- **Diária**: faz todo dia.\n- **Semanal**: uma vez por semana (de segunda a domingo).\n- **Mensal**: uma vez por mês.\n- **Anual**: uma vez por ano.\n\nNa tela, elas ficam separadas por período, com o **prazo** escrito (ex.: "até dom, 29/11"). Quando o prazo está chegando, o cartão fica **vermelho** ⏰. Depois que alguém registra, fica **verde** até começar o próximo período.\n\n${ps.length?`**As suas agora:**\n${ps.map(t=>{const d=due(t),r=doneRec(t);return `- ${t.title}: ${r?`✅ feita por ${r.by} em ${fmtDM(r.day)}`:`${untilTxt(d)}${d.urgent?' — ⏰ **'+leftTxt(d.left)+'**':''}`}`}).join('\n')}`:'Você não tem tarefa semanal, mensal ou anual agora.'}${sr?'\n\nPara mudar o período ou quando ela fica vermelha: aba **Tarefas** → **Editar** → **Periodicidade** e **Ficar vermelha faltando (dias)**.':FIM}`}
   if(!has(q,'criar','cadastr','nova tarefa','editar','excluir','desativ','estorn','errei','marquei','export','excel')){const tk=findTask(u,q);if(tk&&(tk.guia||tk.desc))return taskGuide(u,tk)}
   if(has(q,'quem e voce','quem es','o que voce faz','sua funcao')||(has(q,'ajuda','como uso','como te uso')&&q.length<25))return donaWelcome(u);
   if(sr&&has(q,'explicar o sistema','treinar','ensinar','apresentar','treinamento'))return `**Como apresentar o CheckFormation para a equipe (treino de uns 15 minutos):**\n1. **No celular de cada um**, mostre como entrar com usuário e senha (maiúscula ou minúscula tanto faz).\n2. **Explique a tela Minhas tarefas**: o número grande é quanto já fez; a etiqueta laranja é tarefa **crítica**.\n3. **Façam uma tarefa juntos**: fazer o serviço → escrever a observação se houver problema → tocar no quadrado → ficou verde com nome e hora.\n4. **Combine as 3 regras de ouro:** só marca depois de fazer; não deu para fazer, não marca e avisa; problema sempre vai na observação.\n5. **Apresente a Dona Formatione**: o botão verde no canto, as perguntas prontas, o **🔊 Ouvir** e o **Não entendi**.\n6. **Peça para cada um repetir sozinho** uma vez enquanto você olha.\n\nNa primeira semana, olhe o **Painel** todo dia e elogie quem estiver em dia. Quem tiver dificuldade, oriente a perguntar para a Dona.`;
@@ -1361,7 +1410,7 @@ function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').repla
   if(sr&&has(q,'quem','atencao','desempenho','operador','equipe rend','ranking')){const s=donaStats(14);
     return `**Como a equipe está nos últimos ${s.days} dias** (só conta as tarefas que são de cada pessoa):\n${s.byOp.map(o=>`- **${o.u.name}**: ${o.pct??'—'}% feito, ${o.checks} registros${o.pend.length?`. Falta hoje: ${o.pend.map(t=>t.title).join(', ')}`:'. Em dia hoje'}`).join('\n')}\n\n${s.byOp.filter(o=>o.pct!=null&&o.pct<85).map(o=>`**Atenção:** ${o.u.name} está abaixo de 85%. Antes de cobrar, converse para entender o motivo: muitas tarefas no mesmo horário, fim de turno corrido, falta de material ou dúvida sobre como fazer. Se for dúvida, peça para usar a Dona Formatione.`).join('\n')||'Ninguém abaixo de 85%. Bom sinal!'}`}
   if(has(q,'falta','pendente','o que fazer','minhas tarefas','tenho que','preciso fazer','o que eu faco'))return pend.length?
-    `${fn}, hoje ainda ${pend.length>1?'faltam':'falta'} **${pend.length} tarefa${pend.length>1?'s':''}**${sr?' no checklist geral':' para você'}. Faça nesta ordem:\n${pend.map((t,i)=>`${i+1}. ${t.title}${t.crit?' — ⚠️ **crítica**: faça primeiro, é de segurança':''}${sr?` (${respLabel(t)})`:''}`).join('\n')}\n\n${sr?'Para ver quem é responsável por cada uma, abra a aba **Checklist**.':COMO_MARCAR}${sr?'':FIM}`
+    `${fn}, hoje ainda ${pend.length>1?'faltam':'falta'} **${pend.length} tarefa${pend.length>1?'s':''}**${sr?' no checklist geral':' para você'}. Faça nesta ordem:\n${pend.map((t,i)=>`${i+1}. ${t.title}${perHint(t)}${t.crit?' — ⚠️ **crítica**: faça primeiro, é de segurança':''}${sr?` (${respLabel(t)})`:''}`).join('\n')}\n\n${sr?'Para ver quem é responsável por cada uma, abra a aba **Checklist**.':COMO_MARCAR}${sr?'':FIM}`
     :`Parabéns, ${fn}! ✅ ${sr?'Todas as tarefas de hoje já foram feitas.':'Você já fez **todas** as suas tarefas de hoje.'}\n\nNa tela, todas estão **verdes**, com o nome de quem fez e a hora.${sr?'':' Se aparecer uma tarefa nova, ela vai surgir na tela **Minhas tarefas**.'}`;
   if(has(q,'errei','errado','engano','desfaz','estorn','cancel','apagar registro','sem querer','corrigir','erro'))return sr?
     `**Para corrigir um registro feito por engano (estornar):**\n1. Abra a aba **Histórico** (ou **Checklist**).\n2. Escolha a **data** e encontre o registro.\n3. Toque em **Estornar** e depois em **Confirmar**.\n4. O registro some e a tarefa volta a ficar **pendente**.\n\n**Cuidado:** o estorno apaga o registro e o sistema ainda não guarda quem estornou. Anote o motivo em outro lugar e use só para engano.`
@@ -1373,7 +1422,7 @@ function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').repla
     :`Tarefa **crítica** é a que tem uma **etiqueta laranja** escrita "Crítica" do lado do nome.\n\n**O que quer dizer:** é uma tarefa ligada à **segurança das pessoas** ou à **lei ambiental**. Se ela não for feita, alguém pode se machucar ou a empresa pode levar **multa**.\n\n**O que fazer:**\n1. Faça as tarefas críticas **primeiro**, logo no começo do turno.\n2. Faça com atenção, sem pressa.\n3. Se **não der** para fazer (faltou material, equipamento quebrado), **não marque**. Avise o sênior na hora e escreva o motivo na observação.\n\n**Exemplos:** conferir EPIs, extintores, inspeção do caminhão, MTR e área de resíduos perigosos.${FIM}`;
   if(has(q,'senha','login','acesso','entrar','bloque')||(!sr&&has(q,'usuario')))return sr?`**Trocar senha de alguém:** aba **Equipe** → toque em **Editar** na pessoa → escreva a **Nova senha** → **Salvar usuário**. Passe a senha nova pessoalmente.\n**Tirar o acesso:** toque em **Bloquear** (o histórico da pessoa continua guardado). Para devolver, toque em **Liberar**.\n\nLembre a equipe: no campo Usuário, maiúscula ou minúscula tanto faz.`
     :`Se você esqueceu a senha ou não consegue entrar, ${fn}:\n1. **Não fique tentando** várias senhas diferentes.\n2. Fale com o **sênior**. Só ele pode criar uma senha nova para você.\n3. Ele vai te passar a senha nova. Guarde com você e **não conte para ninguém**.\n\n**Dicas:**\n- No campo **Usuário**, tanto faz escrever com letra maiúscula ou minúscula. Por exemplo, "op1" e "OP1" funcionam igual.\n- Para ver a senha enquanto digita, toque em **Mostrar**, do lado direito da caixa da senha.${FIM}`;
-  if(sr&&has(q,'criar tarefa','nova tarefa','cadastrar tarefa','atribu','quem executa','tarefa'))return `**Para criar uma tarefa:** abra a aba **Tarefas** e preencha o formulário do alto:\n1. **Tarefa**: o nome, começando com um verbo. Ex.: "Conferir extintores do galpão 2".\n2. **Instrução / critério**: como saber que está certo. Ex.: "Lacre inteiro, ponteiro no verde, validade em dia".\n3. **Guia para a Dona Formatione**: o passo a passo completo (para que serve, como fazer, quando não marcar, exemplo de observação). É com ele que eu explico a tarefa para a equipe.\n4. **Departamento**: em qual checklist ela entra (já vem o que está selecionado no alto da tela).\n5. **Categoria**: escolha uma, ou "+ Nova categoria…".\n6. **Criticidade**: **Crítica** para segurança e lei; **Normal** para o resto.\n7. **Quem executa**: "Todos do departamento" ou marque pessoas específicas (só aparece quem tem acesso àquele departamento).\n8. Toque em **Adicionar tarefa**.\n\n**Dica:** tarefa para "todos" fica feita com o primeiro que marcar, então ninguém se sente dono. Para ter responsável claro, escolha pessoas específicas. Escreva a instrução pensando em quem tem pouca leitura: frases curtas e objetivas.`;
+  if(sr&&has(q,'criar tarefa','nova tarefa','cadastrar tarefa','atribu','quem executa','tarefa'))return `**Para criar uma tarefa:** abra a aba **Tarefas** e preencha o formulário do alto:\n1. **Tarefa**: o nome, começando com um verbo. Ex.: "Conferir extintores do galpão 2".\n2. **Instrução / critério**: como saber que está certo. Ex.: "Lacre inteiro, ponteiro no verde, validade em dia".\n3. **Guia para a Dona Formatione**: o passo a passo completo (para que serve, como fazer, quando não marcar, exemplo de observação). É com ele que eu explico a tarefa para a equipe.\n4. **Departamento**: em qual checklist ela entra (já vem o que está selecionado no alto da tela).\n5. **Categoria**: escolha uma, ou "+ Nova categoria…".\n6. **Criticidade** e **Periodicidade**: **Crítica** para segurança e lei, **Normal** para o resto; e se é **Diária, Semanal, Mensal ou Anual** (nas não diárias, diga quantos dias antes do prazo ela fica **vermelha**).\n7. **Quem executa**: "Todos do departamento" ou marque pessoas específicas (só aparece quem tem acesso àquele departamento).\n8. Toque em **Adicionar tarefa**.\n\n**Dica:** tarefa para "todos" fica feita com o primeiro que marcar, então ninguém se sente dono. Para ter responsável claro, escolha pessoas específicas. Escreva a instrução pensando em quem tem pouca leitura: frases curtas e objetivas.`;
   if(sr&&has(q,'cadastr','colaborador','funcionario','pessoa nova','usuario'))return `**Para cadastrar uma pessoa:** aba **Equipe**:\n1. **Nome completo**: é o nome que vai aparecer em cada registro.\n2. **Usuário (login)**: curto, sem espaço. Ex.: "op4" ou "joao.silva".\n3. **Senha**: pelo menos 3 caracteres.\n4. **Perfil**: **Operador** (só vê as próprias tarefas) ou **Sênior** (vê painel e gestão).\n5. **Departamentos que pode acessar**: marque um ou mais (operador precisa de pelo menos um).\n6. Toque em **Cadastrar**.\n\nQuem tem mais de um departamento escolhe no alto da tela em qual vai preencher.\n\nDepois, na aba **Tarefas**, edite as tarefas e marque a pessoa em **Quem executa**. No primeiro dia, mostre para ela o botão da **Dona Formatione**.`;
   if(sr&&has(q,'export','csv','excel','planilha','relatorio'))return `**Para levar os registros para o Excel:**\n1. Abra a aba **Histórico**.\n2. Escolha a **Data** (e o **Colaborador**, se quiser só uma pessoa).\n3. Toque em **Copiar dia (CSV)**, ou em **Copiar tudo** para todos os dias.\n4. Abra o Excel ou o Google Planilhas e **cole** (Ctrl+V).\n\nAs colunas são: Data, Hora, Tarefa, Colaborador e Observação. Se tudo ficar numa coluna só, use "Dados → Texto para colunas" com separador **ponto e vírgula**.`;
   if(sr&&has(q,'painel','indicador','conformidade','grafico'))return `**O que o Painel mostra** (escolha 7, 14 ou 30 dias no alto):\n- **Hoje**: quantas tarefas já foram feitas de quantas existem.\n- **Críticas pendentes hoje**: tarefas de segurança/lei ainda não feitas. Deve ficar em 0.\n- **Conformidade média**: em média, quanto do checklist foi cumprido por dia.\n- **Críticas não feitas**: quantas vezes uma crítica ficou sem fazer no período.\n- **Gráfico**: uma barra por dia; **laranja** = dia abaixo de 80%.\n- **Desempenho por operador**, **Tarefas que mais ficaram sem fazer** e **Observações recentes**.\n\nQuer que eu analise esses números? Pergunte "analise o processo".`;
@@ -1411,8 +1460,8 @@ const mdLite=t=>{const lines=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').split(
     if(kind!==list){if(list)h+=`</${list}>`;if(kind)h+=`<${kind}>`;list=kind}
     if(kind)h+=`<li>${(ul||ol)[1]}</li>`;else if(l.trim())h+=`<p>${l}</p>`}
   if(list)h+=`</${list}>`;return h};
-const donaChips=u=>u.role==='senior'?['Resumo de hoje','Analise o processo','Quem precisa de atenção?','Como criar uma tarefa?','Como cadastrar uma pessoa?','Como exportar para o Excel?','Como explicar o sistema para a equipe?']
-  :['O que falta eu fazer hoje?','Me explique a próxima tarefa','Como eu marco uma tarefa?','O que eu escrevo na observação?','Marquei errado, e agora?','O que é tarefa crítica?','O que é MTR?','O que é EPI?','Esqueci minha senha'];
+const donaChips=u=>u.role==='senior'?['Resumo de hoje','O que está vencendo?','Analise o processo','Quem precisa de atenção?','Como criar uma tarefa?','Como cadastrar uma pessoa?','Como exportar para o Excel?','Como explicar o sistema para a equipe?']
+  :['O que falta eu fazer hoje?','O que está vencendo?','Me explique a próxima tarefa','Como eu marco uma tarefa?','O que eu escrevo na observação?','Marquei errado, e agora?','O que é tarefa crítica?','O que é MTR?','O que é EPI?','Esqueci minha senha'];
 function donaWelcome(u){const fn=first(u.name);return u.role==='senior'?`${greet()}, ${fn}! Eu sou a **Dona Formatione** 🧠♻️\n\nPosso:\n- resumir o dia;\n- analisar o processo com os números do checklist;\n- mostrar quem precisa de atenção;\n- explicar, passo a passo, como configurar tarefas, equipe e relatórios.\n\nToque numa pergunta pronta aqui embaixo ou escreva a sua.`
   :`${greet()}, ${fn}! Eu sou a **Dona Formatione** 🧠♻️, a sua ajudante aqui no sistema.\n\nEu explico tudo com calma, passo a passo.\n\n**Você pode falar comigo assim:**\n1. Toque numa das **perguntas prontas** aqui embaixo.\n2. Ou **escreva** a sua dúvida do seu jeito e toque na setinha **➤**.${dictNs?'\n3. Ou toque no **microfone 🎤** e fale.':''}\n\n👉 Quer **ouvir** a resposta? Toque em **🔊 Ouvir**.\n👉 Não entendeu? Toque em **Não entendi** que eu explico de outro jeito.`}
 function donaSync(force){const u=cur(),box=$('#dona');if(!u){box.innerHTML='';delete box.dataset.uid;dona.uid=null;return}donaLoad(u);if(box.dataset.uid===u.id&&!force)return;box.dataset.uid=u.id;
@@ -1491,6 +1540,7 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.id==='hDay'){histDay=t.value||today();render()}
   if(t.id==='hOp'){histOp=t.value;render()}
   if(t.id==='tCat')$('#newCatBox').hidden=t.value!=='__new';
+  if(t.id==='tFreq'){$('#warnBox').hidden=t.value==='D';$('#tWarn').value=FREQ[t.value].warn}
   if(t.id==='tDept')$('#asgBox').innerHTML=asgHtml(t.value,[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value));
   if(t.id==='uRole'){const sr=t.value==='senior';$('#udepBox').hidden=sr;$('#udepSr').hidden=!sr}
   if(t.id==='asgAll'&&t.checked)document.querySelectorAll('[name=asg]').forEach(c=>c.checked=false);
@@ -1502,7 +1552,7 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
   if(f.id==='fTask'){let cat=$('#tCat').value;if(cat==='__new'){cat=$('#tNewCat').value.trim();if(!cat){toast('Informe a nova categoria');return}if(!S.cats.includes(cat))S.cats.push(cat)}
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
     const assign=[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value).filter(id=>S.users.some(x=>x.id===id&&x.depts.includes(dept)));
-    const v={title:$('#tTitle').value.trim(),desc:$('#tDesc').value.trim(),guia:$('#tGuia').value.trim(),cat,crit:$('#tCrit').value==='1',dept,assign};if(!v.title)return;
+    const v={title:$('#tTitle').value.trim(),desc:$('#tDesc').value.trim(),guia:$('#tGuia').value.trim(),cat,crit:$('#tCrit').value==='1',dept,assign};v.freq=FREQ[$('#tFreq').value]?$('#tFreq').value:'D';if(v.freq!=='D')v.warn=Math.max(0,Math.min(366,Math.round(+$('#tWarn').value||0)));if(!v.title)return;
     if(editTask)Object.assign(S.tasks.find(t=>t.id===editTask),v);else S.tasks.push({id:nextId(),...v,on:true});
     toast((editTask?'Tarefa atualizada':'Tarefa adicionada')+(dept!==curDept(cur())?' em '+deptName(dept):''));editTask=null;await save()}
   if(f.id==='fDept'){const name=$('#dName').value.trim();if(!name)return;
