@@ -1120,30 +1120,80 @@ function vEquipe(){
 }
 
 /* ---------- Histórico (sênior) ---------- */
-function vHistorico(){
-  const dep=curDept(cur()),days=[...new Set(S.records.filter(r=>r.dept===dep).map(r=>r.day))].sort().reverse();
-  if(!histDay)histDay=today();
-  const recs=S.records.filter(r=>r.dept===dep&&r.day===histDay&&(!histOp||r.uid===histOp)).sort((a,b)=>a.at<b.at?-1:1);
-  return `<div class="head"><h2>Histórico · ${esc(deptName(dep))}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-   <div><label for="hDay">Data</label><input type="date" id="hDay" value="${histDay}"></div>
-   <div><label for="hOp">Colaborador</label><select id="hOp"><option value="">Todos</option>${S.users.map(u=>`<option value="${u.id}" ${u.id===histOp?'selected':''}>${esc(u.name)}</option>`).join('')}</select></div>
-   <button class="btn ghost" type="button" data-act="cpDay">Copiar dia (CSV)</button><button class="btn ghost" type="button" data-act="cpAll" title="Todos os departamentos, todas as datas">Copiar tudo</button></div></div>
-  ${days.length?`<p class="note" style="margin-bottom:12px">Dias com registro: ${days.slice(0,10).map(d=>`<a href="#" data-day="${d}">${fmtDM(d)}</a>`).join(' · ')}</p>`:''}
-  ${recs.length?`<table class="stack"><thead><tr><th>Hora</th><th>Tarefa</th><th>Colaborador</th><th>Observação</th><th></th></tr></thead><tbody>
-  ${recs.map(r=>`<tr><td class="t">${fmtTime(r.at)}</td><td>${esc(r.title)}</td><td>${esc(r.by)}</td><td>${esc(r.obs)}</td><td><button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button></td></tr>`).join('')}</tbody></table>`
-  :`<div class="empty">Nenhum registro de ${esc(deptName(dep))} em ${fmtDay(histDay)}.</div>`}`;
+const siteZone='America/Sao_Paulo';
+const allRecords=()=>Object.values(snapshots.records||{}).filter(Boolean);
+let reportStart='',reportEnd='';
+function reportData(start,end){
+  const rows=allRecords().filter(r=>r.day>=start&&r.day<=end).sort((a,b)=>a.day.localeCompare(b.day)||a.at.localeCompare(b.at));
+  const groups=new Map(S.depts.map(d=>[d.id,[d.name,0,0,0,0,0]]));
+  for(const row of rows){
+    if(!groups.has(row.dept))groups.set(row.dept,[deptName(row.dept),0,0,0,0,0]);
+    const line=groups.get(row.dept);
+    if(row.voided){line[5]++;continue}
+    line[1]++;if(row.issue){line[2]++;if(!row.issue.closed)line[3]++}else if(!row.result)line[4]++;
+  }
+  const headers=['Departamento','Execuções válidas','Com desvio','Desvios ainda abertos','Sem classificação','Estornos'];
+  const lines=[...groups.values()].sort((a,b)=>a[0].localeCompare(b[0],'pt-BR'));
+  const total=['Total geral',0,0,0,0,0];for(const line of lines)for(let i=1;i<total.length;i++)total[i]+=line[i];
+  return {start,end,rows,headers,lines,total};
 }
-function csv(rs){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';return ['Data;Hora;Departamento;Tarefa;Colaborador;Observação',...rs.map(r=>[fmtDay(r.day),fmtTime(r.at),deptName(r.dept),r.title,r.by,r.obs].map(q).join(';'))].join('\n')}
-async function copy(txt){try{await navigator.clipboard.writeText(txt);toast('Copiado — cole no Excel ou planilha')}catch(e){toast('Não foi possível copiar neste navegador')}}
+function globalReport(){
+  const initial=today().slice(0,7)+'-01',r=reportStart?reportData(reportStart,reportEnd):null;
+  const line=cells=>'<tr>'+cells.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>';
+  return `<h2>Relatório global</h2><form id="fGlobal" class="panel"><div class="grid"><label>Data inicial<input type="date" name="start" required value="${reportStart||initial}"></label><label>Data final<input type="date" name="end" required value="${reportEnd||today()}"></label></div><div class="row-end"><button class="btn">Gerar relatório</button></div><p role="status"></p></form>
+  ${r?`<section class="panel"><div class="head"><h3>Todos os departamentos · ${fmtDay(r.start)} a ${fmtDay(r.end)}</h3><button class="btn ghost" data-act="globalExcel">Baixar Excel do período</button></div><table class="stack"><thead><tr>${r.headers.map(h=>'<th>'+esc(h)+'</th>').join('')}</tr></thead><tbody>${r.lines.map(line).join('')}${line(r.total)}</tbody></table><p>Período pela data da execução. Os desvios abertos refletem a situação atual. O Excel inclui o resumo e os registros detalhados.</p>${!r.rows.length?'<p>Nenhum registro neste período.</p>':''}${r.rows.length?`<details><summary>Ver os ${r.rows.length} registros do período</summary><table class="stack"><thead><tr>${['Data','Departamento','Tarefa','Executor','Resultado','Observação'].map(h=>'<th>'+h+'</th>').join('')}</tr></thead><tbody>${r.rows.map(row=>line([fmtDay(row.day),deptName(row.dept),row.title,row.by,resultText(row),row.obs||''])).join('')}</tbody></table></details>`:''}</section>`:''}`;
+}
+let histEnd='',histTask='',histResult='';
+function historyRows(){
+  const dep=curDept(cur()),end=histEnd||histDay;
+  return allRecords().filter(r=>r.dept===dep&&r.day>=histDay&&r.day<=end&&(!histOp||r.uid===histOp)&&
+    (!histTask||r.title===histTask)&&(!histResult||resultText(r)===histResult)).sort((a,b)=>a.at.localeCompare(b.at));
+}
+function resultText(r){return r.voided?'Estornado':r.issue?'Desvio':r.result==='regular'?'Regular':'Sem classificação'}
+function options(list,current){return list.map(x=>'<option '+(x===current?'selected':'')+'>'+esc(x)+'</option>').join('')}
+function vHistorico(){
+  histDay=histDay||today();
+  const dep=curDept(cur()),rows=historyRows(),records=allRecords().filter(r=>r.dept===dep);
+  return `<h2>Histórico · ${esc(deptName(dep))}</h2><div class="panel grid">
+    <label>De<input id="hDay" type="date" value="${histDay}"></label><label>Até<input id="hEnd" type="date" min="${histDay}" value="${histEnd||histDay}"></label>
+    <label>Colaborador<select id="hOp"><option value="">Todos</option>${S.users.map(u=>'<option value="'+esc(u.id)+'" '+(u.id===histOp?'selected':'')+'>'+esc(u.name)+'</option>').join('')}</select></label>
+    <label>Tarefa<select id="hTask"><option value="">Todas</option>${options([...new Set(records.map(r=>r.title))].sort(),histTask)}</select></label>
+    <label>Resultado<select id="hResult"><option value="">Todos</option>${options(['Regular','Desvio','Estornado','Sem classificação'],histResult)}</select></label></div>
+    <div class="row-end"><span>${rows.length} registro(s) no filtro</span><button class="btn" data-act="xlsFiltered">Baixar Excel filtrado</button><button class="btn ghost" data-act="xlsAll">Excel de todos os departamentos</button></div>
+    <table class="stack"><thead><tr><th>Data e hora</th><th>Tarefa</th><th>Executor</th><th>Resultado</th><th>Observação</th><th>Ações</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${fmtDay(r.day)} ${fmtTime(r.at)}</td><td>${esc(r.title)}</td><td>${esc(r.by)}</td><td>${resultText(r)}</td><td>${esc(r.obs)} ${r.issue?esc(r.issue.description):''} ${r.voided?'Estorno: '+esc(r.voided.reason)+' · '+esc(r.voided.by):''}</td><td>${r.voided?'':'<button class="btn danger sm" data-undo="'+r.id+'">Estornar</button>'}</td></tr>`).join('')}</tbody></table>${rows.length?'':'<p>Nenhum registro neste filtro.</p>'}`;
+}
+async function exportExcel(rows,file,report=null){
+  if(!rows.length&&!report){toast('Nenhum registro para exportar.');return}
+  try{
+    const XLSX=await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
+    const data=[['Data','Hora','Departamento','Tarefa','Executor','Resultado','Observação','Local','Desvio','Responsável','Prazo','Situação do desvio','Ação realizada','Estornado por','Motivo do estorno','Data e hora do estorno','Recebido no servidor']];
+    const stamp=ms=>typeof ms==='number'?new Date(ms).toLocaleString('pt-BR',{timeZone:siteZone}):'';
+    for(const r of rows){
+      const i=r.issue||{},v=r.voided||{};
+      data.push([fmtDay(r.day),fmtTime(r.at),deptName(r.dept),r.title,r.by,resultText(r),r.obs||'',i.place||'',i.description||'',i.owner?userName(i.owner):'',i.deadline?fmtDay(i.deadline):'',r.issue?(i.closed?'Encerrado':'Aberto'):'',i.closed?.note||'',v.by||'',v.reason||'',stamp(v.at),stamp(r.receivedAt)]);
+    }
+    const sheet=XLSX.utils.aoa_to_sheet(data);
+    sheet['!autofilter']={ref:sheet['!ref']};
+    sheet['!cols']=[14,10,24,42,22,20,46,24,46,22,14,20,40,22,40,24,24].map(wch=>({wch}));
+    const book=XLSX.utils.book_new();
+    if(report){
+      const summary=XLSX.utils.aoa_to_sheet([['Relatório global',fmtDay(report.start),fmtDay(report.end)],report.headers,...report.lines,report.total]);
+      summary['!cols']=report.headers.map((h,i)=>({wch:i?20:32}));
+      XLSX.utils.book_append_sheet(book,summary,'Resumo global');
+    }
+    XLSX.utils.book_append_sheet(book,sheet,'Histórico');
+    XLSX.writeFile(book,file+'.xlsx');toast('Arquivo Excel gerado.');
+  }catch{toast('Não foi possível gerar o Excel. Confira a conexão e tente novamente.')}
+}
 
 /* ---------- Render ---------- */
-const VIEWS={senior:[['dash','Painel'],['checklist','Checklist'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']],op:[['checklist','Minhas tarefas']]};
+const VIEWS={senior:[['dash','Painel'],['global','Relatório global'],['checklist','Checklist'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']],op:[['checklist','Minhas tarefas']]};
 function render(){
   const u=cur(),root=$('#root');
   if(!u){root.innerHTML=vLogin();donaSync();if(window.cfMount3D)window.cfMount3D();return}
   const vs=VIEWS[u.role];if(!vs.some(v=>v[0]===view))view=ls.get('cf-view-'+u.role,vs[0][0]);if(!vs.some(v=>v[0]===view))view=vs[0][0];
-  const ds=deptsOf(u),dep=curDept(u),glob=view==='equipe'||view==='deptos';
-  const body=view==='equipe'?vEquipe():view==='deptos'?vDeptos():!dep?`<div class="empty">${u.role==='senior'?'Nenhum departamento ativo. Ative ou crie um na aba Departamentos.':'Nenhum departamento liberado para você. Fale com o sênior.'}</div>`
+  const ds=deptsOf(u),dep=curDept(u),glob=view==='global'||view==='equipe'||view==='deptos';
+  const body=view==='global'?globalReport():view==='equipe'?vEquipe():view==='deptos'?vDeptos():!dep?`<div class="empty">${u.role==='senior'?'Nenhum departamento ativo. Ative ou crie um na aba Departamentos.':'Nenhum departamento liberado para você. Fale com o sênior.'}</div>`
     :view==='dash'?vDash():view==='tarefas'?vTarefas():view==='historico'?vHistorico():vChecklist(u);
   const dbar=ds.length>1&&!glob?`<div class="dbar" role="group" aria-label="Departamento em que você está preenchendo"><span>Departamento:</span>${ds.map(x=>{const n=pendIn(u,x.id);
     return `<button type="button" data-dept="${x.id}" aria-pressed="${x.id===dep}" title="${n?n+' pendente'+(n>1?'s':'')+' hoje':'Tudo feito hoje'}">${esc(x.name)}${n?`<em>${n}</em>`:''}</button>`}).join('')}</div>`:'';
@@ -1212,7 +1262,7 @@ const DONA_MANUAL=`COMO O CHECKFORMATION FUNCIONA (descreva a tela com estes nom
 - Login: campos "Usuário" e "Senha", botão verde "Entrar". O usuário não diferencia maiúsculas/minúsculas. O botão "Mostrar" deixa ver a senha digitada. Cada pessoa é cadastrada pelo sênior; o nome cadastrado entra sozinho em cada registro.
 - No alto da tela aparece "Bom dia/Boa tarde/Boa noite" com o nome. Botões no canto: tema claro/escuro (☾/☀) e "Sair".
 - OPERADOR vê só a tela "Minhas tarefas". No topo, um número grande (ex.: 3/5 = fez 3 de 5) e uma barra verde de progresso. Abaixo, botões de filtro: "Todas", "Pendentes" e o nome de cada categoria. Cada tarefa é um cartão com o nome, às vezes uma etiqueta laranja "Crítica", a instrução em cinza, a caixa "Observação (opcional)" e, à esquerda, um quadrado branco. Para registrar: faz o serviço, escreve a observação se houver problema e toca no quadrado; ele fica verde com ✓ e aparece "✔ Nome · data às hora"; o cartão fica verde-claro. Tarefa diária vale uma vez por dia; semanal, uma vez por semana; mensal, uma vez por mês; anual, uma vez por ano; tarefas para "todos" ficam feitas pelo primeiro que registrar. O operador não desfaz: pede ao sênior para "estornar".
-- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, Periodicidade (Diária/Semanal/Mensal/Anual) e "Ficar vermelha faltando (dias)", "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil Operador/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, botões "Copiar dia (CSV)" e "Copiar tudo" para colar no Excel, e "Estornar").
+- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, Periodicidade (Diária/Semanal/Mensal/Anual) e "Ficar vermelha faltando (dias)", "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil Operador/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, exportação de arquivo Excel filtrado ou completo, e "Estornar").
 - DEPARTAMENTOS: cada departamento tem o seu próprio checklist (tarefas diferentes). O sênior cria departamentos na aba "Departamentos" (Novo departamento, Renomear, Desativar/Ativar, Excluir — só exclui se não tiver tarefas nem histórico). Cada tarefa pertence a um departamento (campo "Departamento" na aba Tarefas). No cadastro de cada pessoa, na aba "Equipe", o sênior marca as caixinhas "Departamentos que pode acessar"; o sênior acessa todos. Quem tem mais de um departamento vê, no alto da tela, a faixa "Departamento:" com um botão para cada um; o botão claro é o departamento em que está preenchendo agora, e o número ao lado do nome é quantas tarefas faltam hoje ali. Tocar em outro botão troca de departamento. Painel, Checklist, Tarefas e Histórico do sênior mostram só o departamento selecionado; os dados abaixo também são só dele.
 - Estorno apaga o registro do dia; a tarefa volta a pendente. Use só para engano e anote o motivo (não há log de estornos ainda).
 - A Dona Formatione fica no botão redondo verde no canto de baixo. Tem perguntas prontas, campo para escrever, botão 🔊 Ouvir (lê a resposta em voz alta), 🎤 microfone (quando disponível), "Não entendi" e A+ (letra maior).
@@ -1333,7 +1383,7 @@ function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').repla
     :`Se você esqueceu a senha ou não consegue entrar, ${fn}:\n1. **Não fique tentando** várias senhas diferentes.\n2. Fale com o **sênior**. Só ele pode criar uma senha nova para você.\n3. Ele vai te passar a senha nova. Guarde com você e **não conte para ninguém**.\n\n**Dicas:**\n- No campo **Usuário**, tanto faz escrever com letra maiúscula ou minúscula. Por exemplo, "op1" e "OP1" funcionam igual.\n- Para ver a senha enquanto digita, toque em **Mostrar**, do lado direito da caixa da senha.${FIM}`;
   if(sr&&has(q,'criar tarefa','nova tarefa','cadastrar tarefa','atribu','quem executa','tarefa'))return `**Para criar uma tarefa:** abra a aba **Tarefas** e preencha o formulário do alto:\n1. **Tarefa**: o nome, começando com um verbo. Ex.: "Conferir extintores do galpão 2".\n2. **Instrução / critério**: como saber que está certo. Ex.: "Lacre inteiro, ponteiro no verde, validade em dia".\n3. **Guia para a Dona Formatione**: o passo a passo completo (para que serve, como fazer, quando não marcar, exemplo de observação). É com ele que eu explico a tarefa para a equipe.\n4. **Departamento**: em qual checklist ela entra (já vem o que está selecionado no alto da tela).\n5. **Categoria**: escolha uma, ou "+ Nova categoria…".\n6. **Criticidade** e **Periodicidade**: **Crítica** para segurança e lei, **Normal** para o resto; e se é **Diária, Semanal, Mensal ou Anual** (nas não diárias, diga quantos dias antes do prazo ela fica **vermelha**).\n7. **Quem executa**: "Todos do departamento" ou marque pessoas específicas (só aparece quem tem acesso àquele departamento).\n8. Toque em **Adicionar tarefa**.\n\n**Dica:** tarefa para "todos" fica feita com o primeiro que marcar, então ninguém se sente dono. Para ter responsável claro, escolha pessoas específicas. Escreva a instrução pensando em quem tem pouca leitura: frases curtas e objetivas.`;
   if(sr&&has(q,'cadastr','colaborador','funcionario','pessoa nova','usuario'))return `**Para cadastrar uma pessoa:** aba **Equipe**:\n1. **Nome completo**: é o nome que vai aparecer em cada registro.\n2. **Usuário (login)**: curto, sem espaço. Ex.: "op4" ou "joao.silva".\n3. **Senha**: pelo menos 3 caracteres.\n4. **Perfil**: **Operador** (só vê as próprias tarefas) ou **Sênior** (vê painel e gestão).\n5. **Departamentos que pode acessar**: marque um ou mais (operador precisa de pelo menos um).\n6. Toque em **Cadastrar**.\n\nQuem tem mais de um departamento escolhe no alto da tela em qual vai preencher.\n\nDepois, na aba **Tarefas**, edite as tarefas e marque a pessoa em **Quem executa**. No primeiro dia, mostre para ela o botão da **Dona Formatione**.`;
-  if(sr&&has(q,'export','csv','excel','planilha','relatorio'))return `**Para levar os registros para o Excel:**\n1. Abra a aba **Histórico**.\n2. Escolha a **Data** (e o **Colaborador**, se quiser só uma pessoa).\n3. Toque em **Copiar dia (CSV)**, ou em **Copiar tudo** para todos os dias.\n4. Abra o Excel ou o Google Planilhas e **cole** (Ctrl+V).\n\nAs colunas são: Data, Hora, Tarefa, Colaborador e Observação. Se tudo ficar numa coluna só, use "Dados → Texto para colunas" com separador **ponto e vírgula**.`;
+  if(sr&&has(q,'export','csv','excel','planilha','relatorio'))return 'Abra Histórico, escolha período, colaborador, tarefa e resultado. Toque em Baixar Excel filtrado para gerar o arquivo .xlsx.';
   if(sr&&has(q,'painel','indicador','conformidade','grafico'))return `**O que o Painel mostra** (escolha 7, 14 ou 30 dias no alto):\n- **Hoje**: quantas tarefas já foram feitas de quantas existem.\n- **Críticas pendentes hoje**: tarefas de segurança/lei ainda não feitas. Deve ficar em 0.\n- **Conformidade média**: em média, quanto do checklist foi cumprido por dia.\n- **Críticas não feitas**: quantas vezes uma crítica ficou sem fazer no período.\n- **Gráfico**: uma barra por dia; **laranja** = dia abaixo de 80%.\n- **Desempenho por operador**, **Tarefas que mais ficaram sem fazer** e **Observações recentes**.\n\nQuer que eu analise esses números? Pergunte "analise o processo".`;
   if(!sr&&has(q,'painel','indicador','equipe','outros','colega','criar','cadastr','numero'))return `Essa parte é só do **sênior**, ${fn}. Ele cuida de criar tarefas, cadastrar pessoas e ver os números da equipe.\n\nNa sua tela você faz **duas coisas**:\n1. **Ver** as suas tarefas do dia.\n2. **Marcar** cada uma quando terminar.\n\nPrecisa de alguma mudança (uma tarefa nova, trocar a tarefa de pessoa)? É só **falar com o sênior**.${FIM}`;
   if(has(q,'epi','luva','oculos','botina','protetor'))return sr?`**EPI** (Equipamento de Proteção Individual): conferir no início do turno luvas, botina, óculos, protetor auricular e o que mais o risco exigir. Peça para anotarem quem estava sem EPI e a reposição feita. Falta repetida de EPI indica problema de estoque: vale criar uma tarefa semanal de conferência do almoxarifado.`
@@ -1417,7 +1467,7 @@ document.addEventListener('click',async e=>{
   else if(d.act==='showpw'){const p=$('#lgP');p.type=p.type==='password'?'text':'password';el.textContent=p.type==='password'?'Mostrar':'Ocultar'}
   else if(d.act==='logout'){if(auth){await authApi.signOut(auth);location.reload()}}
   else if(d.v){view=d.v;ls.set('cf-view-'+u.role,view);editTask=editUser=editDept=null;render();scrollTo(0,0)}
-  else if(d.dept){setDept(u,d.dept);filter='Todas';editTask=null;render()}
+  else if(d.dept){setDept(u,d.dept);histTask='';histOp='';filter='Todas';editTask=null;render()}
   else if(d.check){if(el.getAttribute('aria-disabled'))return;check(+d.check)}
   else if(d.undo)undo(+d.undo);
   else if(d.f){filter=d.f;render()}
@@ -1441,12 +1491,16 @@ document.addEventListener('click',async e=>{
     if(S.depts.length===1){toast('É preciso ter pelo menos um departamento');return}
     if(S.tasks.some(t=>t.dept===x.id)||S.records.some(r=>r.dept===x.id)){await ask('Não é possível excluir',`“${x.name}” tem tarefas ou histórico de registros. Para tirá-lo de uso sem perder o histórico, use Desativar.`);return}
     if(await ask('Excluir departamento?',`“${x.name}” será removido e sai do cadastro de quem tinha acesso.`)){S.depts=S.depts.filter(y=>y!==x);S.users.forEach(w=>w.depts=w.depts.filter(i=>i!==x.id));if(editDept===x.id)editDept=null;await save()}}
-  else if(d.act==='cpDay')copy(csv(S.records.filter(r=>r.dept===curDept(u)&&r.day===histDay&&(!histOp||r.uid===histOp)).sort((a,b)=>a.at<b.at?-1:1)));
-  else if(d.act==='cpAll')copy(csv([...S.records].sort((a,b)=>a.at<b.at?-1:1)));
+  else if(d.act==='globalExcel'&&reportStart){const report=reportData(reportStart,reportEnd);await exportExcel(report.rows,'CheckFormation_global_'+reportStart+'_'+reportEnd,report)}
+  else if(d.act==='xlsFiltered')await exportExcel(historyRows(),'CheckFormation_'+histDay+'_'+(histEnd||histDay));
+  else if(d.act==='xlsAll'){const rows=allRecords();if(await ask('Exportar todos os departamentos?',rows.length+' registros de todas as datas.'))await exportExcel(rows.sort((a,b)=>a.at.localeCompare(b.at)),'CheckFormation_completo')}
 });
 document.addEventListener('input',e=>{const id=e.target.dataset?.draft;if(id){const dr=ls.get('cf-drafts',{});dr[id]=e.target.value;ls.set('cf-drafts',dr)}});
 document.addEventListener('change',e=>{const t=e.target;
-  if(t.id==='hDay'){histDay=t.value||today();render()}
+  if(t.id==='hDay'){histDay=t.value||today();if(histEnd<histDay)histEnd=histDay;render()}
+  if(t.id==='hEnd'){histEnd=t.value>=histDay?t.value:histDay;render()}
+  if(t.id==='hTask'){histTask=t.value;render()}
+  if(t.id==='hResult'){histResult=t.value;render()}
   if(t.id==='hOp'){histOp=t.value;render()}
   if(t.id==='tCat')$('#newCatBox').hidden=t.value!=='__new';
   if(t.id==='tFreq'){$('#warnBox').hidden=t.value==='D';$('#tWarn').value=FREQ[t.value].warn}
@@ -1458,6 +1512,11 @@ document.addEventListener('change',e=>{const t=e.target;
 document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
   if(['fLogin','fRecover'].includes(f.id)){await submitAccess(f);return;}
   if(!isSr()){toast('Sessão expirada');render();return}
+  if(f.id==='fGlobal'){
+    const start=f.elements.start.value,end=f.elements.end.value;
+    if(!start||!end||start>end){f.querySelector('[role=status]').textContent='A data final deve ser igual ou posterior à inicial.';return}
+    reportStart=start;reportEnd=end;render();return;
+  }
   if(f.id==='fTask'){let cat=$('#tCat').value;if(cat==='__new'){cat=$('#tNewCat').value.trim();if(!cat){toast('Informe a nova categoria');return}if(!S.cats.includes(cat))S.cats.push(cat)}
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
     const assign=[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value).filter(id=>S.users.some(x=>x.id===id&&x.depts.includes(dept)));
