@@ -784,12 +784,12 @@ async function enterProfile(identity) {
     const original=(await api.get(api.ref(db,'users/0'))).val();
     if (!original?.on || original.role!=='senior' || original.authUid) throw Error('profile');
     const mailbox=normalized(identity.email);
-    const loginHash=await digest('adm'), emailHash=await digest(mailbox);
+    const loginHash=await digest('administrativo'), emailHash=await digest(mailbox);
     await api.update(api.ref(db),{
       ['members/'+identity.uid]:'0',
       ['logins/'+loginHash]:{key:'0',email:mailbox},
       ['mailboxes/'+emailHash+'/'+loginHash]:mailbox,
-      'users/0/login':'ADM','users/0/email':mailbox,'users/0/authEmail':mailbox,'users/0/authUid':identity.uid
+      'users/0/login':'ADMINISTRATIVO','users/0/email':mailbox,'users/0/authEmail':mailbox,'users/0/authUid':identity.uid
     });
     key='0';
   }
@@ -1122,7 +1122,7 @@ function vEquipe(){
   <form class="panel" id="fUser" autocomplete="off"><h3>${e?'Editar usuário':'Cadastrar usuário'}</h3>
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
-    <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
+    <div><label for="uLogin">Usuário (login)</label><input id="uLogin" required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
     <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
     <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
     <div><label for="uRole">Perfil de acesso</label><select id="uRole" ${roles.length===1?'disabled':''}>${roles.map(value=>`<option value="${value}" ${value===role?'selected':''}>${roleLabel(value)}</option>`).join('')}</select></div>
@@ -1560,7 +1560,7 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
       error.textContent='Seu perfil não pode administrar este cadastro.';return;
     }
     if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
-    if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
+    if((login==='administrativo' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
     if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}
     if(role==='op'&&!depts.length){error.textContent='Selecione ao menos um departamento.';return}
     const id=profile?.id||'u'+nextId(), key=profile?keyFor('users',id):'id_'+id;
