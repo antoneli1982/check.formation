@@ -706,8 +706,19 @@ const perHint=t=>{const d=due(t);return d.f==='D'?'':` (${FREQ[d.f].n.toLowerCas
 
 /* ---------- Sessão ---------- */
 let signedProfile = null;
-function cur(){return S.users.find(u=>u.id===signedProfile && u.on)||null}
-const isSr=()=>cur()?.role==='senior';
+function cur(){return S.users.find(u=>u.id===signedProfile && u.on && u.authUid===auth?.currentUser?.uid)||null}
+const roleNames = Object.freeze({op:'Operador', supervisor:'Supervisor', senior:'Sênior'});
+const roleLabel = role => roleNames[role] || 'Perfil desconhecido';
+const managesOperations = user => user?.role === 'senior' || user?.role === 'supervisor';
+function canManageAccount(actor, target) {
+  if (!managesOperations(actor)) return false;
+  if (target?.authUid === initialManagerUid && actor.authUid !== initialManagerUid) return false;
+  return actor.role === 'senior' || target?.role === 'op';
+}
+function assignableRoles(actor) {
+  if (actor?.role === 'senior') return ['op','supervisor','senior'];
+  return actor?.role === 'supervisor' ? ['op'] : [];
+}
 const userName=id=>S.users.find(u=>u.id===id)?.name||'—';
 
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),2600)}
@@ -727,7 +738,7 @@ function refreshCloud(){
   S=migrate(state);
   signedProfile=snapshots.users?.[profileKey]?.id;
   baseline=structuredClone(S);
-  if(!cur()){ready=false;accessMessage='Acesso bloqueado. Procure o gestor.'}
+  if(!cur() || !Object.hasOwn(roleNames,cur().role)){ready=false;signedProfile=null;accessMessage='Acesso bloqueado. Procure o gestor.'}
   if(!document.querySelector('input:focus,textarea:focus,select:focus') || !cur())render();
 }
 function keyFor(table,id){return Object.entries(snapshots[table]||{}).find(([,row])=>row?.id===id)?.[0]}
@@ -786,7 +797,7 @@ async function enterProfile(identity) {
   const paths = [...tables,'cats'];
   await Promise.all(paths.map(async path => { snapshots[path] = (await api.get(api.ref(db,path))).val(); }));
   const profile = snapshots.users?.[key];
-  if (!profile?.on || profile.authUid !== identity.uid) throw Error('profile');
+  if (!profile?.on || !Object.hasOwn(roleNames,profile.role) || profile.authUid !== identity.uid) throw Error('profile');
   profileKey = key;
   ready = true;
   refreshCloud();
@@ -853,6 +864,9 @@ function taggedMailbox(mailbox) {
   return local.split('+')[0]+'+cf'+crypto.randomUUID().replaceAll('-','').slice(0,16)+'@'+domain;
 }
 async function setAccess(profile,key,login,password,fields) {
+  const actor = cur();
+  if (!assignableRoles(actor).includes(fields.role) ||
+      (profile && (!canManageAccount(actor,profile) || profile.role !== fields.role))) throw Error('role');
   const nameKey=await digest(normalized(login));
   const oldKey=profile?.login ? await digest(normalized(profile.login)) : null;
   const changes={};
@@ -862,10 +876,10 @@ async function setAccess(profile,key,login,password,fields) {
     const mailbox=normalized(fields.email);
     const mailKey=await digest(mailbox);
     const oldMailKey=profile?.email ? await digest(normalized(profile.email)) : null;
-    const manager=key==='0';
-    if(manager && mailbox!==normalized(auth.currentUser.email)) throw Error('manager-mail');
-    if(manager && password) await authApi.updatePassword(auth.currentUser,password);
-    if(!manager && (password || !uid || mailbox!==profile?.email)) {
+    const ownAccount = key === profileKey && uid === auth.currentUser.uid;
+    if(ownAccount && mailbox !== normalized(profile.email)) throw Error('manager-mail');
+    if(ownAccount && password) await authApi.updatePassword(auth.currentUser,password);
+    if(!ownAccount && (password || !uid || mailbox!==profile?.email)) {
       if(!password) throw Error('password');
       secondary=appModule.initializeApp(cloudApp.options,'access-'+crypto.randomUUID());
       const secondaryAuth=authApi.initializeAuth(secondary,{persistence:authApi.inMemoryPersistence});
@@ -881,7 +895,7 @@ async function setAccess(profile,key,login,password,fields) {
     changes['mailboxes/'+mailKey+'/'+nameKey]=email;
     changes['members/'+uid]=key;
     changes['logins/'+nameKey]={key,email};
-    const updates={...fields,login,authUid:uid,authEmail:email};
+    const updates={...fields,login,loginHash:nameKey,mailHash:mailKey,authUid:uid,authEmail:email};
     for(const [field,value] of Object.entries(updates)) changes['users/'+key+'/'+field]=value;
     if(fields.role==='op' && profile) {
       for(const t of S.tasks) if(t.assign.includes(profile.id) && !fields.depts.includes(t.dept)) {
@@ -924,10 +938,10 @@ function greet(){const h=new Date().getHours();return h>=5&&h<12?'Bom dia':h>=12
 
 /* ---------- Regras ---------- */
 const deptName=id=>S.depts.find(d=>d.id===id)?.name||'—';
-const deptsOf=u=>S.depts.filter(d=>d.on&&(u.role==='senior'||u.depts.includes(d.id)));
+const deptsOf=u=>S.depts.filter(d=>d.on&&(managesOperations(u)||u.depts.includes(d.id)));
 function curDept(u){const ds=deptsOf(u),id=deptSel[u.id]??ls.get('cf-dept-'+u.id,null);return ds.some(d=>d.id===id)?id:ds[0]?.id||null}
 function setDept(u,id){deptSel[u.id]=id;ls.set('cf-dept-'+u.id,id)}
-const canDo=(t,u)=>t.on&&(u.role==='senior'||(u.depts.includes(t.dept)&&(!t.assign.length||t.assign.includes(u.id))));
+const canDo=(t,u)=>t.on&&(managesOperations(u)||(u.depts.includes(t.dept)&&(!t.assign.length||t.assign.includes(u.id))));
 const forUser=(t,u)=>t.dept===curDept(u)&&canDo(t,u);
 const pendIn=(u,dep)=>S.tasks.filter(t=>t.dept===dep&&canDo(t,u)&&!doneRec(t)).length;
 const respLabel=t=>t.assign.length?t.assign.map(userName).map(first).join(', '):'Todos do departamento';
@@ -942,7 +956,7 @@ async function check(id){
   if(await save()){const dr=ls.get('cf-drafts',{});delete dr[id];ls.set('cf-drafts',dr)}
 }
 async function undo(rid){
-  if(!isSr())return;const r=S.records.find(x=>x.id===rid);
+  if(!managesOperations(cur()))return;const r=S.records.find(x=>x.id===rid);
   if(!await ask('Estornar registro?',`“${r.title}” feito por ${r.by} às ${fmtTime(r.at)} será removido.`))return;
   S.records=S.records.filter(x=>x.id!==rid);await save();
 }
@@ -988,8 +1002,8 @@ function vChecklist(u){
    return `<article class="card${r?' done':lt?' late':''}"><button type="button" class="tick" data-check="${t.id}" aria-label="${r?'Concluída':'Marcar como feita'}: ${esc(t.title)}" ${r?'aria-disabled="true"':''}>${r?'<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}</button>
    <h3>${esc(t.title)}${t.crit?'<span class="tag">Crítica</span>':''}${per?`<span class="tag pt">${FREQ[d.f].n} · ${r?esc(perLabel(d)):untilTxt(d)}</span>`:''}${lt?`<span class="tag red">⏰ ${leftTxt(d.left).replace(/^./,c=>c.toUpperCase())}</span>`:''}</h3>
    ${t.desc?`<p class="d">${esc(t.desc)}</p>`:''}
-   ${u.role==='senior'?`<p class="resp">Responsável: ${esc(respLabel(t))}</p>`:''}
-   ${r?`<p class="sig">✔ <b>${esc(r.by)}</b> · <b>${fmtDay(r.day)} às ${fmtTime(r.at)}</b>${per?` <span style="color:var(--mute)">· próximo preenchimento a partir de ${fmtDM(addDays(d.p.e,1))}</span>`:''}${r.obs?`<q>${esc(r.obs)}</q>`:''}${u.role==='senior'?` <button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button>`:''}</p>`
+   ${managesOperations(u)?`<p class="resp">Responsável: ${esc(respLabel(t))}</p>`:''}
+   ${r?`<p class="sig">✔ <b>${esc(r.by)}</b> · <b>${fmtDay(r.day)} às ${fmtTime(r.at)}</b>${per?` <span style="color:var(--mute)">· próximo preenchimento a partir de ${fmtDM(addDays(d.p.e,1))}</span>`:''}${r.obs?`<q>${esc(r.obs)}</q>`:''}${managesOperations(u)?` <button class="btn danger sm" data-undo="${r.id}" type="button">Estornar</button>`:''}</p>`
       :`<div class="obs"><label for="obs${t.id}" style="font-weight:500">Observação (opcional)</label><textarea id="obs${t.id}" rows="1" maxlength="500" data-draft="${t.id}" placeholder="Ex.: extintor B2 com lacre rompido">${esc(dr[t.id]||'')}</textarea></div>`}
    </article>`};
   const secs=Object.keys(FREQ).map(k=>[k,list.filter(t=>fq(t)===k)]).filter(x=>x[1].length);
@@ -998,10 +1012,10 @@ function vChecklist(u){
      S.cats.map(c=>[c,ts.filter(t=>t.cat===c).sort((a,b)=>rank(a)-rank(b))]).filter(g=>g[1].length).map(([c,g])=>`<h3 class="cat">${esc(c)}</h3>`+g.map(card).join('')).join('')}).join('');
   return `${local?'<div class="banner">Modo local: os registros ficam só neste navegador.</div>':''}
   <section class="meter" aria-label="Progresso do dia"><div class="big">${done}<span>/${act.length}</span></div>
-   <div><h2 style="font-size:20px">${u.role==='senior'?'Checklist':'Suas tarefas'} · ${esc(deptName(curDept(u)))}</h2><div class="track" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
+   <div><h2 style="font-size:20px">${managesOperations(u)?'Checklist':'Suas tarefas'} · ${esc(deptName(curDept(u)))}</h2><div class="track" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
    <p>${fmtDay(day)} · ${pct}% concluído${critOpen?` · <b style="color:var(--crit)">${critOpen} crítica${critOpen>1?'s':''} pendente${critOpen>1?'s':''}</b>`:act.length?' · nenhuma crítica pendente':''}${urg?` · <b style="color:var(--danger)">⏰ ${urg} vencendo</b>`:''}</p></div></section>
   <div class="filters">${opts.map(([v,l])=>`<button type="button" data-f="${esc(v)}" aria-pressed="${v===filter}">${esc(l)}</button>`).join('')}</div>
-  ${!act.length?`<div class="empty">Nenhuma tarefa ${u.role==='senior'?'ativa':'para você'} em ${esc(deptName(curDept(u)))} hoje.</div>`:!secs.length?'<div class="empty">Tudo feito por aqui. Bom trabalho!</div>':''}
+  ${!act.length?`<div class="empty">Nenhuma tarefa ${managesOperations(u)?'ativa':'para você'} em ${esc(deptName(curDept(u)))} hoje.</div>`:!secs.length?'<div class="empty">Tudo feito por aqui. Bom trabalho!</div>':''}
   ${body}`;
 }
 
@@ -1096,27 +1110,32 @@ function vDeptos(){
    <div class="acts"><button class="btn ghost sm" type="button" data-dedit="${d.id}">Renomear</button><button class="btn ghost sm" type="button" data-dtog="${d.id}">${d.on?'Desativar':'Ativar'}</button><button class="btn danger sm" type="button" data-ddel="${d.id}">Excluir</button></div></div>`}).join('')}</section>`;
 }
 
-/* ---------- Equipe (sênior) ---------- */
+/* ---------- Equipe e acessos ---------- */
 function vEquipe(){
-  const e=editUser?S.users.find(u=>u.id===editUser):null,me=cur(),ud=e?e.depts:S.depts.length===1?[S.depts[0].id]:[],sr=e?.role==='senior';
-  return `<div class="head"><h2>Equipe e acessos</h2><span class="note">${S.users.filter(u=>u.on).length} usuários ativos</span></div>
+  const me = cur();
+  const team = S.users.filter(person => me.role === 'senior' || person.role === 'op');
+  const e = team.find(person => person.id === editUser && canManageAccount(me,person));
+  const role = e?.role || 'op';
+  const roles = e ? [role] : assignableRoles(me);
+  const ud = e ? e.depts : S.depts.length===1 ? [S.depts[0].id] : [];
+  return `<div class="head"><h2>Equipe e acessos</h2><span class="note">${team.filter(u=>u.on).length} ${me.role==='supervisor'?'operadores ativos':'usuários ativos'}</span></div>
   <form class="panel" id="fUser" autocomplete="off"><h3>${e?'Editar usuário':'Cadastrar usuário'}</h3>
    <div class="grid">
     <div><label for="uName">Nome completo</label><input id="uName" required maxlength="60" value="${esc(e?.name)}"></div>
     <div><label for="uLogin">Usuário (login)</label><input id="uLogin" ${e?.id===me.id?'readonly':''} required maxlength="30" autocapitalize="none" spellcheck="false" value="${esc(e?.login)}"></div>
     <div><label for="uEmail">E-mail de recuperação</label><input id="uEmail" type="email" autocomplete="off" required ${e?.id===me.id?'readonly':''} value="${esc(e?.email)}"></div>
     <div><label for="uPassword">${e?.authUid?'Nova senha (opcional)':'Senha'}</label><input id="uPassword" type="password" autocomplete="new-password" minlength="6" ${e?.authUid?'':'required'}></div>
-    <input id="uRole" type="hidden" value="${sr?'senior':'op'}">
+    <div><label for="uRole">Perfil de acesso</label><select id="uRole" ${roles.length===1?'disabled':''}>${roles.map(value=>`<option value="${value}" ${value===role?'selected':''}>${roleLabel(value)}</option>`).join('')}</select></div>
    </div>
    <div class="f" style="margin-top:14px"><label>Departamentos que pode acessar</label>
-    <div class="checks" id="udepBox" ${sr?'hidden':''}>${S.depts.map(d=>`<label><input type="checkbox" name="udep" value="${d.id}" ${ud.includes(d.id)?'checked':''}> ${esc(d.name)}${d.on?'':' <small style="color:var(--mute)">(inativo)</small>'}</label>`).join('')}</div>
-    <p class="note" id="udepSr" ${sr?'':'hidden'}>O perfil Sênior acessa todos os departamentos.</p></div>
+    <div class="checks" id="udepBox" ${role==='op'?'':'hidden'}>${S.depts.map(d=>`<label><input type="checkbox" name="udep" value="${d.id}" ${ud.includes(d.id)?'checked':''}> ${esc(d.name)}${d.on?'':' <small style="color:var(--mute)">(inativo)</small>'}</label>`).join('')}</div>
+    <p class="note" id="udepSr" ${role==='op'?'hidden':''}>Acesso operacional a todos os departamentos.</p></div>
    <p class="err" id="uErr" role="alert"></p>
    <div class="row-end">${e?'<button class="btn ghost" type="button" data-act="cancelUser">Cancelar</button>':''}<button class="btn">${e?'Salvar usuário':'Cadastrar'}</button></div>
    <p class="note">O nome cadastrado é o que aparece automaticamente em cada check. O login não diferencia maiúsculas e minúsculas. Quem tem mais de um departamento escolhe, no alto da tela, em qual vai preencher.</p></form>
-  <section class="panel">${S.users.map(u=>`<div class="trow${u.on?'':' off'}"><div><b>${esc(u.name)}</b> <span class="tag" style="color:var(--pri);background:var(--ok-bg)">${u.role==='senior'?'Sênior':'Operador'}</span>${u.on?'':' <span class="note">(sem acesso)</span>'}
+  <section class="panel">${team.map(u=>`<div class="trow${u.on?'':' off'}"><div><b>${esc(u.name)}</b> <span class="tag" style="color:var(--pri);background:var(--ok-bg)">${roleLabel(u.role)}</span>${u.on?'':' <span class="note">(sem acesso)</span>'}
     <div class="resp">Login: ${esc(u.login)} · ${u.role==='op'?'Departamentos: '+(esc(u.depts.map(deptName).join(', '))||'<b style="color:var(--crit)">nenhum</b>')+' · '+S.tasks.filter(t=>canDo(t,u)).length+' tarefas':'todos os departamentos'}</div></div>
-   <div class="acts"><button class="btn ghost sm" type="button" data-uedit="${u.id}">Editar</button>${u.id!==me.id?`<button class="btn ghost sm" type="button" data-utog="${u.id}">${u.on?'Bloquear':'Liberar'}</button>`:''}</div></div>`).join('')}</section>`;
+   <div class="acts">${canManageAccount(me,u)?`<button class="btn ghost sm" type="button" data-uedit="${esc(u.id)}">Editar</button>`:''}${u.id!==me.id&&canManageAccount(me,u)?`<button class="btn ghost sm" type="button" data-utog="${u.id}">${u.on?'Bloquear':'Liberar'}</button>`:''}</div></div>`).join('')}</section>`;
 }
 
 /* ---------- Histórico (sênior) ---------- */
@@ -1187,13 +1206,14 @@ async function exportExcel(rows,file,report=null){
 }
 
 /* ---------- Render ---------- */
-const VIEWS={senior:[['dash','Painel'],['global','Relatório global'],['checklist','Checklist'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']],op:[['checklist','Minhas tarefas']]};
+const managementViews=[['dash','Painel'],['global','Relatório global'],['checklist','Checklist'],['tarefas','Tarefas'],['deptos','Departamentos'],['equipe','Equipe'],['historico','Histórico']];
+const VIEWS={senior:managementViews, supervisor:managementViews.filter(([key])=>key!=='deptos'), op:[['checklist','Minhas tarefas']]};
 function render(){
   const u=cur(),root=$('#root');
   if(!u){root.innerHTML=vLogin();donaSync();if(window.cfMount3D)window.cfMount3D();return}
   const vs=VIEWS[u.role];if(!vs.some(v=>v[0]===view))view=ls.get('cf-view-'+u.role,vs[0][0]);if(!vs.some(v=>v[0]===view))view=vs[0][0];
   const ds=deptsOf(u),dep=curDept(u),glob=view==='global'||view==='equipe'||view==='deptos';
-  const body=view==='global'?globalReport():view==='equipe'?vEquipe():view==='deptos'?vDeptos():!dep?`<div class="empty">${u.role==='senior'?'Nenhum departamento ativo. Ative ou crie um na aba Departamentos.':'Nenhum departamento liberado para você. Fale com o sênior.'}</div>`
+  const body=view==='global'?globalReport():view==='equipe'?vEquipe():view==='deptos'?vDeptos():!dep?`<div class="empty">${managesOperations(u)?'Nenhum departamento ativo. Peça a um sênior para ativar um departamento.':'Nenhum departamento liberado para você. Fale com o sênior.'}</div>`
     :view==='dash'?vDash():view==='tarefas'?vTarefas():view==='historico'?vHistorico():vChecklist(u);
   const dbar=ds.length>1&&!glob?`<div class="dbar" role="group" aria-label="Departamento em que você está preenchendo"><span>Departamento:</span>${ds.map(x=>{const n=pendIn(u,x.id);
     return `<button type="button" data-dept="${x.id}" aria-pressed="${x.id===dep}" title="${n?n+' pendente'+(n>1?'s':'')+' hoje':'Tudo feito hoje'}">${esc(x.name)}${n?`<em>${n}</em>`:''}</button>`}).join('')}</div>`:'';
@@ -1201,7 +1221,7 @@ function render(){
   root.innerHTML=`<header><div class="wrap">
    <div class="brand">${markSvg}<div><h1>CheckFormation</h1><small>Checklist operacional · Grupo Dutrafer</small></div>
     ${uniImg('unihead mobile-logo')}<div class="who"><small id="cloud-status">${connected?'Firebase conectado':'Conectando ao Firebase…'}</small>${uniImg('unihead')}${themeBtn()}<button class="chip" type="button" data-act="logout" aria-label="Sair"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-3px"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl"> Sair</span></button></div></div>
-   <div class="hello"><b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${u.role==='senior'?'Sênior':'Operador'}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
+   <div class="hello"><b>${greet()}, ${esc(first(u.name))}!</b><span class="role">${roleLabel(u.role)}</span><span>${esc(u.name)}${ds.length===1?' · '+esc(ds[0].name):''} · ${dt}</span></div>
    ${dbar}${vs.length>1?`<nav role="tablist">${vs.map(([k,l])=>`<button role="tab" type="button" data-v="${k}" aria-selected="${k===view}">${l}</button>`).join('')}</nav>`:''}
   </div></header><main class="wrap">${body}</main>`;
   donaSync();
@@ -1245,24 +1265,25 @@ function donaStats(period=14){const dep=curDept(cur()),end=today(),start=addDays
   return {start,end,days:past.length,avg,worst,worstPct:worst?pct(worst):null,miss,critMiss,byOp,todayDone,todayPend,obs,act:all}}
 function donaContext(u){const now=new Date(),day=today(),recs=S.records.filter(r=>r.day===day);
   const taskInfo=t=>{const r=doneRec(t,day),d=due(t,day);return {tarefa:t.title,periodicidade:FREQ[d.f].n,...(d.f!=='D'?{periodo_atual:perLabel(d),prazo:fmtDay(d.p.e),dias_para_o_prazo:d.left,vermelha_por_prazo_proximo:!r&&d.urgent}:{}),categoria:t.cat,critica:t.crit,instrucao:t.desc||undefined,guia:t.guia||undefined,
-    responsavel:u.role==='senior'?respLabel(t):undefined,status:r?`feita por ${r.by} em ${fmtDay(r.day)} às ${fmtTime(r.at)}`:'pendente',observacao:r?.obs||undefined}};
-  const dep=curDept(u),base={hoje:fmtDay(day),agora:fmtTime(now.toISOString()),usuario:u.name,perfil:u.role==='senior'?'Sênior':'Operador',departamento_selecionado_agora:deptName(dep),departamentos_que_o_usuario_acessa:deptsOf(u).map(d=>({nome:d.name,pendentes_hoje:pendIn(u,d.id)}))};
-  if(u.role!=='senior')return {...base,minhas_tarefas_hoje:S.tasks.filter(t=>forUser(t,u)).map(taskInfo)};
+    responsavel:managesOperations(u)?respLabel(t):undefined,status:r?`feita por ${r.by} em ${fmtDay(r.day)} às ${fmtTime(r.at)}`:'pendente',observacao:r?.obs||undefined}};
+  const dep=curDept(u),base={hoje:fmtDay(day),agora:fmtTime(now.toISOString()),usuario:u.name,perfil:roleLabel(u.role),departamento_selecionado_agora:deptName(dep),departamentos_que_o_usuario_acessa:deptsOf(u).map(d=>({nome:d.name,pendentes_hoje:pendIn(u,d.id)}))};
+  if(!managesOperations(u))return {...base,minhas_tarefas_hoje:S.tasks.filter(t=>forUser(t,u)).map(taskInfo)};
   const st=donaStats(14);
   return {...base,checklist_hoje:S.tasks.filter(t=>t.on&&t.dept===dep).map(taskInfo),
     indicadores_14_dias:{dias_operados:st.days,conformidade_media_pct:st.avg,pior_dia:st.worst?`${fmtDay(st.worst)} (${st.worstPct}%)`:null,criticas_nao_feitas:st.critMiss,
       tarefas_que_mais_falharam:st.miss.slice(0,6).map(x=>`${x.t.title}${x.t.crit?' [crítica]':''}: ${x.m} de ${st.days} dias`),
       por_operador:st.byOp.map(o=>({nome:o.u.name,login:o.u.login,conformidade_atribuidas_pct:o.pct,checks:o.checks,pendentes_hoje:o.pend.map(t=>t.title)}))},
-    equipe:S.users.map(x=>({nome:x.name,login:x.login,perfil:x.role==='senior'?'Sênior':'Operador',acesso:x.on?'liberado':'bloqueado',departamentos:x.role==='senior'?'todos':x.depts.map(deptName)})),
+    equipe:S.users.filter(x=>u.role==='senior'||x.role==='op').map(x=>({nome:x.name,login:x.login,perfil:roleLabel(x.role),acesso:x.on?'liberado':'bloqueado',departamentos:managesOperations(x)?'todos':x.depts.map(deptName)})),
     departamentos_cadastrados:S.depts.map(d=>({nome:d.name,ativo:d.on,tarefas_ativas:S.tasks.filter(t=>t.on&&t.dept===d.id).length})),
     tarefas_cadastradas:S.tasks.filter(t=>t.dept===dep).map(t=>({tarefa:t.title,categoria:t.cat,critica:t.crit,ativa:t.on,executa:respLabel(t)})),
     registros_14_dias:S.records.filter(r=>r.dept===dep&&r.day>=st.start).map(r=>`${fmtDM(r.day)} ${fmtTime(r.at)} | ${r.title} | ${r.by}${r.obs?' | obs: '+r.obs:''}`)}}
 
 const DONA_MANUAL=`COMO O CHECKFORMATION FUNCIONA (descreva a tela com estes nomes)
-- Login: campos "Usuário" e "Senha", botão verde "Entrar". O usuário não diferencia maiúsculas/minúsculas. O botão "Mostrar" deixa ver a senha digitada. Cada pessoa é cadastrada pelo sênior; o nome cadastrado entra sozinho em cada registro.
+- Login: campos "Usuário" e "Senha", botão verde "Entrar". O usuário não diferencia maiúsculas/minúsculas. O botão "Mostrar" deixa ver a senha digitada. Operadores podem ser cadastrados por um supervisor ou sênior; o nome cadastrado entra sozinho em cada registro.
 - No alto da tela aparece "Bom dia/Boa tarde/Boa noite" com o nome. Botões no canto: tema claro/escuro (☾/☀) e "Sair".
 - OPERADOR vê só a tela "Minhas tarefas". No topo, um número grande (ex.: 3/5 = fez 3 de 5) e uma barra verde de progresso. Abaixo, botões de filtro: "Todas", "Pendentes" e o nome de cada categoria. Cada tarefa é um cartão com o nome, às vezes uma etiqueta laranja "Crítica", a instrução em cinza, a caixa "Observação (opcional)" e, à esquerda, um quadrado branco. Para registrar: faz o serviço, escreve a observação se houver problema e toca no quadrado; ele fica verde com ✓ e aparece "✔ Nome · data às hora"; o cartão fica verde-claro. Tarefa diária vale uma vez por dia; semanal, uma vez por semana; mensal, uma vez por mês; anual, uma vez por ano; tarefas para "todos" ficam feitas pelo primeiro que registrar. O operador não desfaz: pede ao sênior para "estornar".
-- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, Periodicidade (Diária/Semanal/Mensal/Anual) e "Ficar vermelha faltando (dias)", "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil Operador/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, exportação de arquivo Excel filtrado ou completo, e "Estornar").
+- SUPERVISOR gerencia tarefas, registros, relatórios e operadores em todos os departamentos. Na aba Equipe, pode cadastrar, editar, bloquear e liberar operadores. A configuração de departamentos e os cadastros de supervisores e sêniores ficam com o Sênior.
+- SÊNIOR tem abas no alto: "Painel" (indicadores de 7/14/30 dias: Hoje, Críticas pendentes hoje, Conformidade média, Críticas não feitas, gráfico de barras por dia com barras laranja abaixo de 80%, Desempenho por operador, Tarefas que mais ficaram sem fazer, Observações recentes); "Checklist" (todas as tarefas com o responsável; pode registrar e estornar); "Tarefas" (formulário: Tarefa, Instrução/critério, "Guia para a Dona Formatione" — o passo a passo detalhado que a Dona usa para explicar a tarefa; tarefa sem guia aparece na lista com o aviso "sem guia para a Dona" —, Departamento, Categoria, Criticidade Normal/Crítica, Periodicidade (Diária/Semanal/Mensal/Anual) e "Ficar vermelha faltando (dias)", "Quem executa" com caixinhas; botões Editar, Desativar/Ativar, Excluir); "Equipe" (Nome completo, Usuário, Senha, Perfil de acesso Operador/Supervisor/Sênior, botão Cadastrar; Editar, Bloquear/Liberar); "Histórico" (Data, Colaborador, exportação de arquivo Excel filtrado ou completo, e "Estornar").
 - DEPARTAMENTOS: cada departamento tem o seu próprio checklist (tarefas diferentes). O sênior cria departamentos na aba "Departamentos" (Novo departamento, Renomear, Desativar/Ativar, Excluir — só exclui se não tiver tarefas nem histórico). Cada tarefa pertence a um departamento (campo "Departamento" na aba Tarefas). No cadastro de cada pessoa, na aba "Equipe", o sênior marca as caixinhas "Departamentos que pode acessar"; o sênior acessa todos. Quem tem mais de um departamento vê, no alto da tela, a faixa "Departamento:" com um botão para cada um; o botão claro é o departamento em que está preenchendo agora, e o número ao lado do nome é quantas tarefas faltam hoje ali. Tocar em outro botão troca de departamento. Painel, Checklist, Tarefas e Histórico do sênior mostram só o departamento selecionado; os dados abaixo também são só dele.
 - Estorno apaga o registro do dia; a tarefa volta a pendente. Use só para engano e anote o motivo (não há log de estornos ainda).
 - A Dona Formatione fica no botão redondo verde no canto de baixo. Tem perguntas prontas, campo para escrever, botão 🔊 Ouvir (lê a resposta em voz alta), 🎤 microfone (quando disponível), "Não entendi" e A+ (letra maior).
@@ -1280,8 +1301,8 @@ const DONA_DOMAIN=`CONTEXTO OPERACIONAL (gestão de resíduos e reciclagem) — 
 - Boa observação = o que viu + onde + o que fez. Ex.: "Extintor perto da balança com lacre rompido. Avisei o sênior às 8h."
 - Não conseguiu fazer tarefa crítica: não marcar; avisar o sênior na hora. Emergência (vazamento, fogo, acidente): primeiro as pessoas — afastar, avisar sênior/brigada; registrar depois.
 - Normas e prazos legais: fale de forma geral e recomende confirmar com o responsável técnico/SESMT; não invente números de norma.`;
-function donaPrompt(u,q){const sr=u.role==='senior';
-  const nivel=sr?`NÍVEL SÊNIOR (gestão), mas em LINGUAGEM CLARA: responda completo e detalhado, com os números do contexto (datas, nomes, percentuais), dizendo o que cada número significa na prática, as causas prováveis e o que fazer, em ordem de prioridade. Quando for configurar algo no sistema, dê o passo a passo com o nome exato de cada aba e botão. Explique siglas. Use títulos curtos em negrito e listas. Termine com uma sugestão de próximo passo.`
+function donaPrompt(u,q){const sr=managesOperations(u);
+  const nivel=sr?`NÍVEL ${roleLabel(u.role).toUpperCase()} (gestão). Para cadastros, siga as permissões deste perfil no manual, mas em LINGUAGEM CLARA: responda completo e detalhado, com os números do contexto (datas, nomes, percentuais), dizendo o que cada número significa na prática, as causas prováveis e o que fazer, em ordem de prioridade. Quando for configurar algo no sistema, dê o passo a passo com o nome exato de cada aba e botão. Explique siglas. Use títulos curtos em negrito e listas. Termine com uma sugestão de próximo passo.`
    :`NÍVEL EQUIPE — PÚBLICO COM POUCA ESCOLARIDADE E POUCA FAMILIARIDADE COM CELULAR/COMPUTADOR. Explique BEM DETALHADO e com calma, como um bom instrutor falando pessoalmente:
 1. Primeira linha: a resposta direta, em uma frase curta, chamando ${first(u.name)} pelo nome.
 2. Depois, passo a passo numerado, UMA ação por passo, dizendo exatamente onde tocar e o que vai aparecer na tela (nome do botão, cor, posição: "no canto de baixo", "do lado esquerdo").
@@ -1341,10 +1362,10 @@ function findTask(u,q){const qw=new Set(wordsOf(q)),dep=curDept(u);let best=null
     for(const w of new Set(wordsOf(t.title)))if(qw.has(w))sc+=2;for(const w of new Set(wordsOf(t.desc)))if(qw.has(w))sc+=1;for(const k of t.kw||[])if(q.includes(k))sc+=2;
     if(sc&&t.dept===dep)sc+=.5;if(sc>bs){best=t;bs=sc}}
   return best}
-function taskGuide(u,t){const sr=u.role==='senior',r=doneRec(t),dd=due(t),other=t.dept!==curDept(u);
+function taskGuide(u,t){const sr=managesOperations(u),r=doneRec(t),dd=due(t),other=t.dept!==curDept(u);
   const body=t.guia?t.guia.replace(/^([A-ZÀ-Ú][^:\n]{2,44}):/gm,'**$1:**'):`**Instrução cadastrada:** ${t.desc}\n\n${sr?'Esta tarefa ainda **não tem guia**. Para eu explicar melhor à equipe, abra a aba **Tarefas** → **Editar** → preencha **Guia para a Dona Formatione**.':'Para saber os detalhes desta tarefa, pergunte ao **sênior**.'}`;
   return `**${t.title}**${t.crit?' — ⚠️ tarefa **crítica**':''}${dd.f!=='D'?`\n🗓 ${FREQ[dd.f].n}: ${perLabel(dd)}, preencher ${untilTxt(dd)}${!r&&dd.urgent?' — ⏰ **'+leftTxt(dd.left)+'**':''}`:''}${sr?`\nExecuta: ${respLabel(t)} · Departamento: ${deptName(t.dept)}`:other?`\nEsta tarefa é do departamento **${deptName(t.dept)}**. Troque de departamento no alto da tela para marcar.`:''}\n\n${body}\n\n${r?`✅ ${dd.f==='D'?'Hoje':'Neste período'} ela já foi feita por **${r.by}**, em ${fmtDM(r.day)} às ${fmtTime(r.at)}.`:sr?`${dd.f==='D'?'Hoje':'Neste período'} ela ainda está **pendente**.`:'👉 Fez tudo e está certo? Toque no **quadrado branco** da tarefa. Não deu para fazer? **Não marque** e avise o sênior.'}${sr?'':FIM}`}
-function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''),sr=u.role==='senior',fn=first(u.name),day=today(),recs=S.records.filter(r=>r.day===day);
+function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''),sr=managesOperations(u),fn=first(u.name),day=today(),recs=S.records.filter(r=>r.day===day);
   const mine=S.tasks.filter(t=>forUser(t,u)),pend=mine.filter(t=>!doneRec(t)).sort((a,b)=>(due(b).urgent-due(a).urgent)||(b.crit-a.crit));
   if(depth===0&&has(q,'nao entendi','mais facil','explica de novo','outro jeito','como assim','nao entendo','nao sei')){
     const prev=[...dona.msgs].reverse().filter(m=>m.r==='u').map(m=>m.t).find(t=>!/n[aã]o entend|mais f[aá]cil|de novo|outro jeito|como assim|n[aã]o sei/i.test(t));
@@ -1366,26 +1387,26 @@ function donaLocal(u,q0,depth=0){const q=q0.toLowerCase().normalize('NFD').repla
   if(sr&&has(q,'analis','diagnost','melhor','process','gargalo','problema'))return donaAnalysis();
   if(sr&&has(q,'resumo','hoje','situacao','status','como esta','como estamos')){const s=donaStats(14);
     return `**Resumo de ${fmtDay(day)}**\n- Concluídas: **${s.todayDone.length} de ${s.act.length}** tarefas (${s.act.length?Math.round(s.todayDone.length/s.act.length*100):0}%).\n- Ainda pendentes: ${s.todayPend.length?s.todayPend.map(t=>`${t.title}${t.crit?' (**crítica**)':''} — ${respLabel(t)}`).join('; '):'nenhuma'}.\n- Conformidade média dos últimos ${s.days} dias: **${s.avg}%**. Quer dizer: em média, de cada 10 tarefas, cerca de ${Math.round(s.avg/10)} foram feitas.\n${s.todayPend.some(t=>t.crit)?'\n**O que fazer agora:** cobrar as tarefas **críticas** pendentes antes do fim do turno. Elas são de segurança e de lei ambiental.':'\n**Próximo passo:** acompanhar as pendências normais até o encerramento do turno.'}`}
-  if(sr&&has(q,'quem','atencao','desempenho','operador','equipe rend','ranking')){const s=donaStats(14);
+  if(sr&&!has(q,'cadastr','criar','incluir','adicionar')&&has(q,'quem','atencao','desempenho','operador','equipe rend','ranking')){const s=donaStats(14);
     return `**Como a equipe está nos últimos ${s.days} dias** (só conta as tarefas que são de cada pessoa):\n${s.byOp.map(o=>`- **${o.u.name}**: ${o.pct??'—'}% feito, ${o.checks} registros${o.pend.length?`. Falta hoje: ${o.pend.map(t=>t.title).join(', ')}`:'. Em dia hoje'}`).join('\n')}\n\n${s.byOp.filter(o=>o.pct!=null&&o.pct<85).map(o=>`**Atenção:** ${o.u.name} está abaixo de 85%. Antes de cobrar, converse para entender o motivo: muitas tarefas no mesmo horário, fim de turno corrido, falta de material ou dúvida sobre como fazer. Se for dúvida, peça para usar a Dona Formatione.`).join('\n')||'Ninguém abaixo de 85%. Bom sinal!'}`}
   if(has(q,'falta','pendente','o que fazer','minhas tarefas','tenho que','preciso fazer','o que eu faco'))return pend.length?
     `${fn}, hoje ainda ${pend.length>1?'faltam':'falta'} **${pend.length} tarefa${pend.length>1?'s':''}**${sr?' no checklist geral':' para você'}. Faça nesta ordem:\n${pend.map((t,i)=>`${i+1}. ${t.title}${perHint(t)}${t.crit?' — ⚠️ **crítica**: faça primeiro, é de segurança':''}${sr?` (${respLabel(t)})`:''}`).join('\n')}\n\n${sr?'Para ver quem é responsável por cada uma, abra a aba **Checklist**.':COMO_MARCAR}${sr?'':FIM}`
     :`Parabéns, ${fn}! ✅ ${sr?'Todas as tarefas de hoje já foram feitas.':'Você já fez **todas** as suas tarefas de hoje.'}\n\nNa tela, todas estão **verdes**, com o nome de quem fez e a hora.${sr?'':' Se aparecer uma tarefa nova, ela vai surgir na tela **Minhas tarefas**.'}`;
   if(has(q,'errei','errado','engano','desfaz','estorn','cancel','apagar registro','sem querer','corrigir','erro'))return sr?
     `**Para corrigir um registro feito por engano (estornar):**\n1. Abra a aba **Histórico** (ou **Checklist**).\n2. Escolha a **data** e encontre o registro.\n3. Toque em **Estornar** e depois em **Confirmar**.\n4. O registro some e a tarefa volta a ficar **pendente**.\n\n**Cuidado:** o estorno apaga o registro e o sistema ainda não guarda quem estornou. Anote o motivo em outro lugar e use só para engano.`
-    :`Calma, ${fn}, isso acontece e tem solução. 🙂\n\nVocê **não consegue desfazer sozinho**. Quem desfaz é o **sênior**. É assim de propósito, para ninguém apagar um registro sem querer.\n\n**O que fazer:**\n1. Procure o sênior (ou ligue para ele).\n2. Diga **qual tarefa** você marcou por engano.\n3. Ele vai **estornar** (quer dizer: apagar o registro errado).\n4. A tarefa volta a ficar **branca**, como pendente.\n5. Quando fizer o serviço de verdade, marque de novo.${FIM}`;
+    :`Calma, ${fn}, isso acontece e tem solução. 🙂\n\nVocê **não consegue desfazer sozinho**. O **supervisor** ou o **sênior** pode estornar o registro. É assim de propósito, para ninguém apagar um registro sem querer.\n\n**O que fazer:**\n1. Procure o sênior (ou ligue para ele).\n2. Diga **qual tarefa** você marcou por engano.\n3. Ele vai **estornar** (quer dizer: apagar o registro errado).\n4. A tarefa volta a ficar **branca**, como pendente.\n5. Quando fizer o serviço de verdade, marque de novo.${FIM}`;
   if(has(q,'como marc','como eu marc','marco','como regist','como eu regist','como da check','como faco','check','registrar','concluir','marcar')&&!has(q,'criar','nova','cadastr','export','excel','senha','observ','escrev'))return `É bem simples, ${fn}. Siga estes passos:\n1. **Primeiro faça o serviço** de verdade, no local. Só marque depois de terminar.\n2. Na tela **${sr?'Checklist':'Minhas tarefas'}**, procure a tarefa na lista.\n3. Do lado esquerdo dela tem um **quadrado branco**.\n4. Viu algum problema? **Antes** de marcar, toque na caixa **Observação** e escreva o que viu.\n5. Agora **toque no quadrado**.\n6. O quadrado fica **verde com um ✓**, e aparece o seu **nome, a data e a hora**.\n\n**Por que isso é importante?** O registro prova que o serviço foi feito, por quem e quando. Isso protege você e a empresa numa fiscalização.\n\n⚠️ **Não conseguiu fazer?** Então **não marque**. Avise o sênior.${sr?'':FIM}`;
   if(has(q,'observ','escrever','anotar','comentario','escrevo'))return sr?`**Padrão de observação para ensinar à equipe:** o quê + onde + o que foi feito.\n- Bom: "Extintor perto da balança com lacre rompido. Isolado e pedida a troca às 8h."\n- Ruim: "problema no extintor" (ninguém sabe qual nem o que foi feito).\n\nPeça para escreverem **sempre que algo não estiver normal**, mesmo com a tarefa feita. As observações aparecem no **Painel**, no quadro **Observações recentes**.`
     :`A **observação** é um **recado escrito** que fica guardado junto com a tarefa. O sênior lê depois.\n\n**Quando escrever:** sempre que alguma coisa **não estiver normal**. Por exemplo: algo quebrado, faltando, vazando ou sujo.\n\n**O que escrever (3 coisas):**\n1. **O que** você viu.\n2. **Onde** estava.\n3. **O que você fez** (por exemplo: "avisei o sênior").\n\n👉 **Exemplo bom:** "Extintor perto da balança com o lacre rompido. Avisei o sênior às 8h."\n👉 **Exemplo ruim:** "deu problema" (ninguém entende o que foi).\n\nSe estiver tudo certo, pode deixar a caixa **em branco**.${FIM}`;
   if(has(q,'critic'))return sr?`**Tarefas críticas** são as de segurança e de lei ambiental: EPI, extintores, inspeção dos caminhões, MTR e resíduos perigosos (Classe I).\n- Na tela, aparecem com a etiqueta laranja **Crítica**.\n- No **Painel**, entram nos quadros "Críticas pendentes hoje" e "Críticas não feitas".\n- Para marcar uma tarefa como crítica: aba **Tarefas** → **Editar** → **Criticidade: Crítica** → **Salvar alterações**.\n\n**Recomendação:** cobrar as críticas até o meio do turno e tratar qualquer falha como ocorrência.`
     :`Tarefa **crítica** é a que tem uma **etiqueta laranja** escrita "Crítica" do lado do nome.\n\n**O que quer dizer:** é uma tarefa ligada à **segurança das pessoas** ou à **lei ambiental**. Se ela não for feita, alguém pode se machucar ou a empresa pode levar **multa**.\n\n**O que fazer:**\n1. Faça as tarefas críticas **primeiro**, logo no começo do turno.\n2. Faça com atenção, sem pressa.\n3. Se **não der** para fazer (faltou material, equipamento quebrado), **não marque**. Avise o sênior na hora e escreva o motivo na observação.\n\n**Exemplos:** conferir EPIs, extintores, inspeção do caminhão, MTR e área de resíduos perigosos.${FIM}`;
   if(has(q,'senha','login','acesso','entrar','bloque')||(!sr&&has(q,'usuario')))return sr?`**Trocar senha de alguém:** aba **Equipe** → toque em **Editar** na pessoa → escreva a **Nova senha** → **Salvar usuário**. Passe a senha nova pessoalmente.\n**Tirar o acesso:** toque em **Bloquear** (o histórico da pessoa continua guardado). Para devolver, toque em **Liberar**.\n\nLembre a equipe: no campo Usuário, maiúscula ou minúscula tanto faz.`
-    :`Se você esqueceu a senha ou não consegue entrar, ${fn}:\n1. **Não fique tentando** várias senhas diferentes.\n2. Fale com o **sênior**. Só ele pode criar uma senha nova para você.\n3. Ele vai te passar a senha nova. Guarde com você e **não conte para ninguém**.\n\n**Dicas:**\n- No campo **Usuário**, tanto faz escrever com letra maiúscula ou minúscula. Por exemplo, "op1" e "OP1" funcionam igual.\n- Para ver a senha enquanto digita, toque em **Mostrar**, do lado direito da caixa da senha.${FIM}`;
+    :`Se você esqueceu a senha ou não consegue entrar, ${fn}:\n1. **Não fique tentando** várias senhas diferentes.\n2. Fale com o **sênior**. O supervisor também pode ajustar o acesso de um operador.\n3. Ele vai te passar a senha nova. Guarde com você e **não conte para ninguém**.\n\n**Dicas:**\n- No campo **Usuário**, tanto faz escrever com letra maiúscula ou minúscula. Por exemplo, "op1" e "OP1" funcionam igual.\n- Para ver a senha enquanto digita, toque em **Mostrar**, do lado direito da caixa da senha.${FIM}`;
   if(sr&&has(q,'criar tarefa','nova tarefa','cadastrar tarefa','atribu','quem executa','tarefa'))return `**Para criar uma tarefa:** abra a aba **Tarefas** e preencha o formulário do alto:\n1. **Tarefa**: o nome, começando com um verbo. Ex.: "Conferir extintores do galpão 2".\n2. **Instrução / critério**: como saber que está certo. Ex.: "Lacre inteiro, ponteiro no verde, validade em dia".\n3. **Guia para a Dona Formatione**: o passo a passo completo (para que serve, como fazer, quando não marcar, exemplo de observação). É com ele que eu explico a tarefa para a equipe.\n4. **Departamento**: em qual checklist ela entra (já vem o que está selecionado no alto da tela).\n5. **Categoria**: escolha uma, ou "+ Nova categoria…".\n6. **Criticidade** e **Periodicidade**: **Crítica** para segurança e lei, **Normal** para o resto; e se é **Diária, Semanal, Mensal ou Anual** (nas não diárias, diga quantos dias antes do prazo ela fica **vermelha**).\n7. **Quem executa**: "Todos do departamento" ou marque pessoas específicas (só aparece quem tem acesso àquele departamento).\n8. Toque em **Adicionar tarefa**.\n\n**Dica:** tarefa para "todos" fica feita com o primeiro que marcar, então ninguém se sente dono. Para ter responsável claro, escolha pessoas específicas. Escreva a instrução pensando em quem tem pouca leitura: frases curtas e objetivas.`;
-  if(sr&&has(q,'cadastr','colaborador','funcionario','pessoa nova','usuario'))return `**Para cadastrar uma pessoa:** aba **Equipe**:\n1. **Nome completo**: é o nome que vai aparecer em cada registro.\n2. **Usuário (login)**: curto, sem espaço. Ex.: "op4" ou "joao.silva".\n3. **Senha**: pelo menos 3 caracteres.\n4. **Perfil**: **Operador** (só vê as próprias tarefas) ou **Sênior** (vê painel e gestão).\n5. **Departamentos que pode acessar**: marque um ou mais (operador precisa de pelo menos um).\n6. Toque em **Cadastrar**.\n\nQuem tem mais de um departamento escolhe no alto da tela em qual vai preencher.\n\nDepois, na aba **Tarefas**, edite as tarefas e marque a pessoa em **Quem executa**. No primeiro dia, mostre para ela o botão da **Dona Formatione**.`;
+  if(sr&&has(q,'cadastr','colaborador','funcionario','pessoa nova','usuario'))return `**Para cadastrar uma pessoa:** aba **Equipe**:\n1. **Nome completo**: é o nome que vai aparecer em cada registro.\n2. **Usuário (login)**: curto, sem espaço. Ex.: "op4" ou "joao.silva".\n3. Informe o **e-mail de recuperação** e uma **senha** de pelo menos 6 caracteres.\n4. Em **Perfil de acesso**, ${u.role==='senior'?'escolha Operador, Supervisor ou Sênior':'o cadastro será de Operador'}.\n5. **Departamentos que pode acessar**: marque um ou mais (operador precisa de pelo menos um).\n6. Toque em **Cadastrar**.\n\nQuem tem mais de um departamento escolhe no alto da tela em qual vai preencher.\n\nDepois, na aba **Tarefas**, edite as tarefas e marque a pessoa em **Quem executa**. No primeiro dia, mostre para ela o botão da **Dona Formatione**.`;
   if(sr&&has(q,'export','csv','excel','planilha','relatorio'))return 'Abra Histórico, escolha período, colaborador, tarefa e resultado. Toque em Baixar Excel filtrado para gerar o arquivo .xlsx.';
   if(sr&&has(q,'painel','indicador','conformidade','grafico'))return `**O que o Painel mostra** (escolha 7, 14 ou 30 dias no alto):\n- **Hoje**: quantas tarefas já foram feitas de quantas existem.\n- **Críticas pendentes hoje**: tarefas de segurança/lei ainda não feitas. Deve ficar em 0.\n- **Conformidade média**: em média, quanto do checklist foi cumprido por dia.\n- **Críticas não feitas**: quantas vezes uma crítica ficou sem fazer no período.\n- **Gráfico**: uma barra por dia; **laranja** = dia abaixo de 80%.\n- **Desempenho por operador**, **Tarefas que mais ficaram sem fazer** e **Observações recentes**.\n\nQuer que eu analise esses números? Pergunte "analise o processo".`;
-  if(!sr&&has(q,'painel','indicador','equipe','outros','colega','criar','cadastr','numero'))return `Essa parte é só do **sênior**, ${fn}. Ele cuida de criar tarefas, cadastrar pessoas e ver os números da equipe.\n\nNa sua tela você faz **duas coisas**:\n1. **Ver** as suas tarefas do dia.\n2. **Marcar** cada uma quando terminar.\n\nPrecisa de alguma mudança (uma tarefa nova, trocar a tarefa de pessoa)? É só **falar com o sênior**.${FIM}`;
+  if(!sr&&has(q,'painel','indicador','equipe','outros','colega','criar','cadastr','numero'))return `O **supervisor** e o **sênior** cuidam das tarefas, do cadastro de operadores e dos números da equipe, ${fn}.\n\nNa sua tela você faz **duas coisas**:\n1. **Ver** as suas tarefas do dia.\n2. **Marcar** cada uma quando terminar.\n\nPrecisa de alguma mudança (uma tarefa nova, trocar a tarefa de pessoa)? É só **falar com o sênior**.${FIM}`;
   if(has(q,'epi','luva','oculos','botina','protetor'))return sr?`**EPI** (Equipamento de Proteção Individual): conferir no início do turno luvas, botina, óculos, protetor auricular e o que mais o risco exigir. Peça para anotarem quem estava sem EPI e a reposição feita. Falta repetida de EPI indica problema de estoque: vale criar uma tarefa semanal de conferência do almoxarifado.`
     :`**EPI** quer dizer **Equipamento de Proteção Individual**. São as coisas que **protegem o seu corpo** no trabalho.\n\n**Confira antes de começar:**\n1. **Luvas**: protegem as mãos de cortes e produtos.\n2. **Botina**: protege os pés de peso e pregos.\n3. **Óculos**: protegem os olhos de pó e respingos.\n4. **Protetor de ouvido**: protege do barulho das máquinas.\n\n**Está rasgado, quebrado ou faltando?** Peça outro ao sênior **antes** de começar e escreva na observação.\n👉 Exemplo: "Luva do Pedro rasgada. Pegou uma nova no almoxarifado."\n\n**Por que importa:** sem EPI, um acidente pequeno pode virar um machucado grave.${FIM}`;
   if(has(q,'extintor','rota de fuga','fuga'))return `O **extintor** é o **cilindro vermelho** que apaga começo de incêndio. Ele precisa estar sempre pronto.\n\n**Em cada extintor, confira 4 coisas:**\n1. **Lacre**: o plástico ou arame que prende o pino. Tem que estar **inteiro**.\n2. **Ponteiro** (o reloginho): tem que estar na **faixa verde**.\n3. **Validade**: olhe a etiqueta. Não pode estar vencida.\n4. **Caminho livre**: nada pode estar na frente (palete, caçamba, caixa).\n\nA **rota de fuga** é o caminho para sair correndo numa emergência. Também não pode ter nada atrapalhando.\n\n**Achou problema?** Escreva **qual extintor e onde** está, e ${sr?'providencie a troca':'avise o sênior'}.${sr?'':FIM}`;
@@ -1419,12 +1440,12 @@ const mdLite=t=>{const lines=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').split(
     if(kind!==list){if(list)h+=`</${list}>`;if(kind)h+=`<${kind}>`;list=kind}
     if(kind)h+=`<li>${(ul||ol)[1]}</li>`;else if(l.trim())h+=`<p>${l}</p>`}
   if(list)h+=`</${list}>`;return h};
-const donaChips=u=>u.role==='senior'?['Resumo de hoje','O que está vencendo?','Analise o processo','Quem precisa de atenção?','Como criar uma tarefa?','Como cadastrar uma pessoa?','Como exportar para o Excel?','Como explicar o sistema para a equipe?']
+const donaChips=u=>managesOperations(u)?['Resumo de hoje','O que está vencendo?','Analise o processo','Quem precisa de atenção?','Como criar uma tarefa?','Como cadastrar uma pessoa?','Como exportar para o Excel?','Como explicar o sistema para a equipe?']
   :['O que falta eu fazer hoje?','O que está vencendo?','Me explique a próxima tarefa','Como eu marco uma tarefa?','O que eu escrevo na observação?','Marquei errado, e agora?','O que é tarefa crítica?','O que é MTR?','O que é EPI?','Esqueci minha senha'];
-function donaWelcome(u){const fn=first(u.name);return u.role==='senior'?`${greet()}, ${fn}! Eu sou a **Dona Formatione** 🧠♻️\n\nPosso:\n- resumir o dia;\n- analisar o processo com os números do checklist;\n- mostrar quem precisa de atenção;\n- explicar, passo a passo, como configurar tarefas, equipe e relatórios.\n\nToque numa pergunta pronta aqui embaixo ou escreva a sua.`
+function donaWelcome(u){const fn=first(u.name);return managesOperations(u)?`${greet()}, ${fn}! Eu sou a **Dona Formatione** 🧠♻️\n\nPosso:\n- resumir o dia;\n- analisar o processo com os números do checklist;\n- mostrar quem precisa de atenção;\n- explicar, passo a passo, como configurar tarefas, equipe e relatórios.\n\nToque numa pergunta pronta aqui embaixo ou escreva a sua.`
   :`${greet()}, ${fn}! Eu sou a **Dona Formatione** 🧠♻️, a sua ajudante aqui no sistema.\n\nEu explico tudo com calma, passo a passo.\n\n**Você pode falar comigo assim:**\n1. Toque numa das **perguntas prontas** aqui embaixo.\n2. Ou **escreva** a sua dúvida do seu jeito e toque na setinha **➤**.${dictNs?'\n3. Ou toque no **microfone 🎤** e fale.':''}\n\n👉 Quer **ouvir** a resposta? Toque em **🔊 Ouvir**.\n👉 Não entendeu? Toque em **Não entendi** que eu explico de outro jeito.`}
 function donaSync(force){const u=cur(),box=$('#dona');if(!u){box.innerHTML='';delete box.dataset.uid;dona.uid=null;return}donaLoad(u);if(box.dataset.uid===u.id&&!force)return;box.dataset.uid=u.id;
-  const sr=u.role==='senior',ai=sampleNs?'IA conectada':sampleTried?'Modo offline · respostas prontas':'',big=ls.get('cf-dona-big',!sr);
+  const sr=managesOperations(u),ai=sampleNs?'IA conectada':sampleTried?'Modo offline · respostas prontas':'',big=ls.get('cf-dona-big',!sr);
   box.innerHTML=`<button type="button" class="dfab" data-dona="open" aria-label="Abrir a Dona Formatione, ajuda" ${dona.open?'hidden':''}><span class="dav">${DONA_ICON('f')}</span><span class="dlbl">Dúvidas? <b>Fale com a Dona</b></span></button>
   <section class="dpanel${big?' dbig':''}" role="dialog" aria-label="Dona Formatione" ${dona.open?'':'hidden'}>
    <header class="dhead"><span class="dav lg">${DONA_ICON('h')}</span><div><b>Dona Formatione</b><small>${sr?'Modo sênior · respostas completas':'Modo equipe · explicações passo a passo'}</small></div>
@@ -1472,16 +1493,17 @@ document.addEventListener('click',async e=>{
   else if(d.undo)undo(+d.undo);
   else if(d.f){filter=d.f;render()}
   else if(d.period){period=+d.period;render()}
-  else if(!isSr())return;
+  else if(!managesOperations(u))return;
   else if(d.edit){editTask=+d.edit;render();scrollTo({top:0,behavior:'smooth'})}
   else if(d.tog){const t=S.tasks.find(x=>x.id===+d.tog);t.on=!t.on;await save()}
   else if(d.del){const t=S.tasks.find(x=>x.id===+d.del);if(await ask('Excluir tarefa?',`“${t.title}” sai do checklist. Os registros antigos continuam no histórico.`)){S.tasks=S.tasks.filter(x=>x!==t);await save()}}
-  else if(d.uedit){editUser=d.uedit;render();scrollTo({top:0,behavior:'smooth'})}
-  else if(d.utog){const x=S.users.find(y=>y.id===d.utog);x.on=!x.on;toast(x.on?'Acesso liberado':'Acesso bloqueado');await save()}
+  else if(d.uedit){const target=S.users.find(x=>x.id===d.uedit);if(!target||!canManageAccount(u,target))return;editUser=d.uedit;render();scrollTo({top:0,behavior:'smooth'})}
+  else if(d.utog){const x=S.users.find(y=>y.id===d.utog);if(!x||x.id===u.id||!canManageAccount(u,x))return;x.on=!x.on;await save()}
   else if(d.day){e.preventDefault();histDay=d.day;render()}
   else if(d.act==='cancelTask'){editTask=null;render()}
   else if(d.act==='cancelUser'){editUser=null;render()}
   else if(d.act==='cancelDept'){editDept=null;render()}
+  else if((d.dedit||d.dtog||d.ddel) && u.role!=='senior')return;
   else if(d.dedit){editDept=d.dedit;render();scrollTo({top:0,behavior:'smooth'})}
   else if(d.dtog){const x=S.depts.find(y=>y.id===d.dtog);
     if(x.on&&S.depts.filter(y=>y.on).length===1){toast('Mantenha pelo menos um departamento ativo');return}
@@ -1505,13 +1527,13 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.id==='tCat')$('#newCatBox').hidden=t.value!=='__new';
   if(t.id==='tFreq'){$('#warnBox').hidden=t.value==='D';$('#tWarn').value=FREQ[t.value].warn}
   if(t.id==='tDept')$('#asgBox').innerHTML=asgHtml(t.value,[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value));
-  if(t.id==='uRole'){const sr=t.value==='senior';$('#udepBox').hidden=sr;$('#udepSr').hidden=!sr}
+  if(t.id==='uRole'){const operational=t.value==='op';$('#udepBox').hidden=!operational;$('#udepSr').hidden=operational}
   if(t.id==='asgAll'&&t.checked)document.querySelectorAll('[name=asg]').forEach(c=>c.checked=false);
   if(t.name==='asg'&&t.checked)$('#asgAll').checked=false;
 });
 document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
   if(['fLogin','fRecover'].includes(f.id)){await submitAccess(f);return;}
-  if(!isSr()){toast('Sessão expirada');render();return}
+  if(!managesOperations(cur()))return;
   if(f.id==='fGlobal'){
     const start=f.elements.start.value,end=f.elements.end.value;
     if(!start||!end||start>end){f.querySelector('[role=status]').textContent='A data final deve ser igual ou posterior à inicial.';return}
@@ -1519,11 +1541,11 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
   }
   if(f.id==='fTask'){let cat=$('#tCat').value;if(cat==='__new'){cat=$('#tNewCat').value.trim();if(!cat){toast('Informe a nova categoria');return}if(!S.cats.includes(cat))S.cats.push(cat)}
     const dept=$('#tDept').value;if(!S.depts.some(x=>x.id===dept))return;
-    const assign=[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value).filter(id=>S.users.some(x=>x.id===id&&x.depts.includes(dept)));
+    const assign=[...document.querySelectorAll('[name=asg]:checked')].map(c=>c.value).filter(id=>S.users.some(x=>x.id===id&&x.role==='op'&&x.depts.includes(dept)));
     const v={title:$('#tTitle').value.trim(),desc:$('#tDesc').value.trim(),guia:$('#tGuia').value.trim(),cat,crit:$('#tCrit').value==='1',dept,assign};v.freq=FREQ[$('#tFreq').value]?$('#tFreq').value:'D';if(v.freq!=='D')v.warn=Math.max(0,Math.min(366,Math.round(+$('#tWarn').value||0)));if(!v.title)return;
     if(editTask)Object.assign(S.tasks.find(t=>t.id===editTask),v);else S.tasks.push({id:nextId(),...v,on:true});
     toast((editTask?'Tarefa atualizada':'Tarefa adicionada')+(dept!==curDept(cur())?' em '+deptName(dept):''));editTask=null;await save()}
-  if(f.id==='fDept'){const name=$('#dName').value.trim();if(!name)return;
+  if(f.id==='fDept' && cur().role==='senior'){const name=$('#dName').value.trim();if(!name)return;
     if(S.depts.some(x=>x.name.toLowerCase()===name.toLowerCase()&&x.id!==editDept)){$('#dErr').textContent='Já existe um departamento com esse nome.';return}
     if(editDept){S.depts.find(x=>x.id===editDept).name=name;toast('Departamento atualizado')}
     else{S.depts.push({id:'d'+(nextId()),name,on:true});toast('Departamento criado')}
@@ -1531,8 +1553,12 @@ document.addEventListener('submit',async e=>{e.preventDefault();const f=e.target
   if(f.id==='fUser'){
     const profile=editUser?S.users.find(u=>u.id===editUser):null;
     const login=normalized($('#uLogin').value),name=$('#uName').value.trim(),password=$('#uPassword').value,email=normalized($('#uEmail').value);
-    const role=profile?.role||'op', depts=[...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value);
+    const role=profile?.role || $('#uRole').value;
+    const depts=role==='op' ? [...f.querySelectorAll('[name=udep]:checked')].map(c=>c.value) : [];
     const error=$('#uErr');
+    if((editUser && (!profile || !canManageAccount(cur(),profile))) || !assignableRoles(cur()).includes(role)){
+      error.textContent='Seu perfil não pode administrar este cadastro.';return;
+    }
     if(!name || !/^[a-z0-9._-]{2,30}$/.test(login)){error.textContent='Informe o nome e um login de 2 a 30 caracteres, sem espaços.';return}
     if((login==='adm' && (!profile || keyFor('users',profile.id)!=='0')) || S.users.some(u=>u.id!==profile?.id && (normalized(u.login)===login))){error.textContent='Este login já está em uso.';return}
     if((!profile?.authUid || password || email!==profile?.email) && password.length<6){error.textContent='Informe uma senha de pelo menos 6 caracteres para criar ou alterar o e-mail da conta.';return}

@@ -1,0 +1,28 @@
+name: Permissões do CheckFormation
+on:
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'database.rules.json'
+      - 'firebase.json'
+      - 'tests/**'
+      - '.github/workflows/perfis.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  perfis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm install --prefix tests --no-audit --no-fund --no-package-lock
+      - run: node --test tests/interface.test.cjs
+      - run: tests/node_modules/.bin/firebase emulators:exec --project demo-checkformation --only database "node --test tests/permissions.test.cjs"
