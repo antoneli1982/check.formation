@@ -109,3 +109,41 @@ test('operador usa o checklist e fica fora da gestão', async () => {
   await assertFails(database.ref().update(account('outro-operador','op').changes));
   await assertFails(env.unauthenticatedContext().database().ref('users').once('value'));
 });
+
+test('o ADM legado ativa o próprio vínculo e permanece protegido dos demais gestores', async () => {
+  const app = readFileSync(join(__dirname,'..','index.html'),'utf8');
+  const uid = app.match(/const initialManagerUid='([^']+)'/)[1];
+  const owner = {uid};
+  const mailbox = 'titular@example.test';
+  const loginHash = hash('adm');
+  await env.withSecurityRulesDisabled(ctx => ctx.database().ref('users/0').set({
+    id:'u1', name:'Titular', login:'ADM', role:'senior', on:true
+  }));
+  await assertSucceeds(db(owner).ref('users/0').once('value'));
+  await assertSucceeds(db(owner).ref().update({
+    ['members/' + uid]:'0',
+    ['logins/' + loginHash]:{key:'0',email:mailbox},
+    ['mailboxes/' + hash(mailbox) + '/' + loginHash]:mailbox,
+    'users/0/login':'ADM', 'users/0/email':mailbox,
+    'users/0/authEmail':mailbox, 'users/0/authUid':uid
+  }));
+  await assertSucceeds(db(owner).ref('users').once('value'));
+  await assertFails(db(senior).ref('users/0/name').set('Outra pessoa'));
+  await assertFails(db(senior).ref('logins/' + loginHash).remove());
+});
+
+test('supervisor vincula um operador legado pelo identificador original', async () => {
+  const user = account('u2', 'op');
+  await env.withSecurityRulesDisabled(ctx => ctx.database().ref('users/1').set({
+    id:'u2', name:'Pessoa existente', login:'OP1', role:'op', on:true, depts:['d1']
+  }));
+  const loginHash = hash('op1');
+  await assertSucceeds(db(supervisor).ref().update({
+    ['members/' + user.uid]:'1',
+    ['logins/' + loginHash]:{key:'1',email:user.fields.authEmail},
+    ['mailboxes/' + user.fields.mailHash + '/' + loginHash]:user.fields.authEmail,
+    'users/1/authUid':user.uid, 'users/1/authEmail':user.fields.authEmail,
+    'users/1/email':user.fields.email, 'users/1/loginHash':loginHash, 'users/1/mailHash':user.fields.mailHash
+  }));
+  await assertSucceeds(db(user).ref('users/1').once('value'));
+});
